@@ -1,0 +1,9 @@
+services:
+  willem:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./credentials.json:/app/credentials.json:ro

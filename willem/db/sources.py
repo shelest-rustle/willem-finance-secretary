@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import sqlite3
+import uuid
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str
+    user_id: int
+    name: str
+    type: str
+    currency: str
+    is_active: bool
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> Source:
+        return cls(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            type=row["type"],
+            currency=row["currency"],
+            is_active=bool(row["is_active"]),
+        )
+
+
+def create_source(
+    conn: sqlite3.Connection, user_id: int, name: str, type: str, currency: str = "KZT"
+) -> Source:
+    source_id = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO sources (id, user_id, name, type, currency, is_active) "
+        "VALUES (?, ?, ?, ?, ?, 1)",
+        (source_id, user_id, name, type, currency),
+    )
+    return Source(
+        id=source_id, user_id=user_id, name=name, type=type, currency=currency, is_active=True
+    )
+
+
+def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
+    row = conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
+    return Source.from_row(row) if row else None
+
+
+def list_sources(
+    conn: sqlite3.Connection, user_id: int, active_only: bool = True
+) -> list[Source]:
+    query = "SELECT * FROM sources WHERE user_id = ?"
+    params: list = [user_id]
+    if active_only:
+        query += " AND is_active = 1"
+    query += " ORDER BY name"
+    rows = conn.execute(query, params).fetchall()
+    return [Source.from_row(r) for r in rows]
+
+
+def update_source(
+    conn: sqlite3.Connection,
+    source_id: str,
+    *,
+    name: str | None = None,
+    currency: str | None = None,
+) -> None:
+    fields = []
+    params: list = []
+    if name is not None:
+        fields.append("name = ?")
+        params.append(name)
+    if currency is not None:
+        fields.append("currency = ?")
+        params.append(currency)
+    if not fields:
+        return
+    params.append(source_id)
+    conn.execute(f"UPDATE sources SET {', '.join(fields)} WHERE id = ?", params)
+
+
+def archive_source(conn: sqlite3.Connection, source_id: str) -> None:
+    conn.execute("UPDATE sources SET is_active = 0 WHERE id = ?", (source_id,))

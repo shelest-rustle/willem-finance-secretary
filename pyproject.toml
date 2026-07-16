@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "willem-finance-secretary"
+version = "0.1.0"
+description = "Willem — личный секретарь по ведению расходов: Telegram-бот на aiogram с синхронизацией в Google Sheets"
+authors = ["Мария Шелест"]
+readme = "README.md"
+packages = [{ include = "willem" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+aiogram = "^3.15"
+gspread = "^6.1.4"
+google-auth = "^2.35.0"
+APScheduler = "^3.10.4"
+python-dotenv = "^1.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.24"
+ruff = "^0.7"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
