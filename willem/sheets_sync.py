@@ -48,7 +48,7 @@ async def sync_after_insert(
     return ""
 
 
-def _resync_owner_unsynced(config: Config) -> int:
+def resync_owner_unsynced(config: Config) -> int:
     """Синхронно досинкивает все неотправленные операции владельца. Возвращает число успешных."""
     synced_count = 0
     with connect(config.db_path) as conn:
@@ -74,4 +74,4 @@ def _resync_owner_unsynced(config: Config) -> int:
 
 async def resync_unsynced_for_owner(config: Config) -> int:
     """Асинхронная обёртка для ночной джобы — блокирующие вызовы уходят в отдельный поток."""
-    return await asyncio.to_thread(_resync_owner_unsynced, config)
+    return await asyncio.to_thread(resync_owner_unsynced, config)

@@ -9,7 +9,7 @@ from willem.config import Config
 from willem.db import sources
 from willem.db.connection import connect, init_db
 from willem.db.transactions import insert_transaction
-from willem.sheets_sync import SYNC_ERROR_SUFFIX, _resync_owner_unsynced, sync_after_insert
+from willem.sheets_sync import SYNC_ERROR_SUFFIX, resync_owner_unsynced, sync_after_insert
 
 
 def make_config(db_path: Path) -> Config:
@@ -112,7 +112,7 @@ def test_resync_owner_unsynced_ignores_other_users(
             conn, user_id=2, type="income", amount=500, currency="KZT", source_id=friend_source.id
         )
 
-    synced_count = _resync_owner_unsynced(config)
+    synced_count = resync_owner_unsynced(config)
 
     assert synced_count == 1
     with connect(str(db_path)) as conn:
@@ -141,7 +141,7 @@ def test_resync_owner_unsynced_leaves_failures_unsynced(
             conn, user_id=1, type="income", amount=1000, currency="KZT", source_id=source.id
         )
 
-    synced_count = _resync_owner_unsynced(config)
+    synced_count = resync_owner_unsynced(config)
 
     assert synced_count == 0
     with connect(str(db_path)) as conn:
