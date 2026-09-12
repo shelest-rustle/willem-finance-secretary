@@ -8,7 +8,7 @@ from willem import cli
 def test_resync_command_reports_synced_count(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli, "bootstrap", lambda: "fake-config")
+    monkeypatch.setattr(cli, "bootstrap", lambda: ("fake-config", "fake-texts"))
     monkeypatch.setattr(cli, "resync_owner_unsynced", lambda config: 3)
 
     cli.main(["resync"])

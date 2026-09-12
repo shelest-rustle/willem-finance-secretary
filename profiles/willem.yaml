@@ -1,0 +1,50 @@
+name: willem
+persona: "Виллем"
+
+seed_sources:
+  - name: "Kaspi"
+    type: card
+    currency: KZT
+  - name: "bcc"
+    type: card
+    currency: KZT
+  - name: "Freedom"
+    type: card
+    currency: KZT
+  - name: "Т-банк"
+    type: card
+    currency: RUB
+  - name: "Озон Банк"
+    type: card
+    currency: RUB
+  - name: "BYBIT"
+    type: crypto
+    currency: KZT
+  - name: "Кубышка"
+    type: card
+    currency: RUB
+  - name: "Наличные"
+    type: cash
+    currency: KZT
+
+seed_categories:
+  - "Транспорт"
+  - "Питание"
+  - "Артемида"
+  - "Здоровье"
+  - "Квартира"
+  - "Спорт"
+  - "Подписки"
+  - "Связь"
+  - "Германия"
+  - "Друзья"
+  - "Шоппинг"
+  - "Образование"
+  - "Долги"
+  - "Быт"
+  - "Подарки"
+  - "Кредиты"
+  - "Другое"
+
+# Голос Виллема — это и есть willem/texts_base.yaml, поэтому переопределений нет.
+messages: {}

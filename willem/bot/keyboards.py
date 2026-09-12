@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 TRANSFER_BUTTON = "Перевод"
@@ -11,15 +11,27 @@ TODAY_BUTTON = "Сегодня"
 WEEK_BUTTON = "Неделя"
 LAST_BUTTON = "Последние"
 
+SKIP_LABEL = "Пропустить"
+
 
 def build_choice_keyboard(
-    items: list[tuple[str, str]], callback_prefix: str, columns: int = 2
+    items: list[tuple[str, str]],
+    callback_prefix: str,
+    columns: int = 2,
+    extra_buttons: list[tuple[str, str]] | None = None,
 ) -> InlineKeyboardMarkup:
+    """`extra_buttons` — доп. кнопки (подпись, callback_data), каждая отдельной строкой под
+    основной сеткой выбора — используется для кнопки «Пропустить» или переключателя «Кто»."""
     builder = InlineKeyboardBuilder()
     for item_id, label in items:
         builder.button(text=label, callback_data=f"{callback_prefix}:{item_id}")
     builder.adjust(columns)
-    return builder.as_markup()
+    markup = builder.as_markup()
+    for label, callback_data in extra_buttons or []:
+        markup.inline_keyboard.append(
+            [InlineKeyboardButton(text=label, callback_data=callback_data)]
+        )
+    return markup
 
 
 def build_manage_list_keyboard(

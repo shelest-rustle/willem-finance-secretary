@@ -8,12 +8,15 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from willem.bot.handlers.expense import _record_expense
 from willem.config import Config
+from willem.texts import Texts
 from willem.db import categories, sources
 from willem.db.connection import connect, init_db
 
 
 def make_config(db_path: Path) -> Config:
     return Config(
+        profile_name="willem",
+        persona="Виллем",
         bot_token="123:fake",
         owner_telegram_id=999,
         allowed_telegram_ids=(1,),
@@ -22,6 +25,15 @@ def make_config(db_path: Path) -> Config:
         google_sheets_spreadsheet_id="",
         timezone="Asia/Almaty",
         log_level="INFO",
+        seed_sources=(),
+        seed_categories=(),
+        seed_all_users=False,
+        categorize_all=False,
+        optional_comment=False,
+        people={},
+        currency_options=(),
+        type_options=(),
+        debt_types=(),
     )
 
 
@@ -31,7 +43,7 @@ def make_state() -> FSMContext:
     return FSMContext(storage=storage, key=key)
 
 
-async def test_record_expense_without_limit(tmp_path: Path) -> None:
+async def test_record_expense_without_limit(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -43,13 +55,13 @@ async def test_record_expense_without_limit(tmp_path: Path) -> None:
     state = make_state()
     await state.update_data(amount=3400, source_id=source.id, category_id=category.id)
 
-    text = await _record_expense(state, config, 1, comment="test")
+    text = await _record_expense(state, config, texts, 1, comment="test")
 
     assert text == "Записал: 3 400 ₸ — Продукты. 💸"
     assert await state.get_state() is None
 
 
-async def test_record_expense_near_limit(tmp_path: Path) -> None:
+async def test_record_expense_near_limit(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -63,12 +75,12 @@ async def test_record_expense_near_limit(tmp_path: Path) -> None:
     state = make_state()
     await state.update_data(amount=42000, source_id=source.id, category_id=category.id)
 
-    text = await _record_expense(state, config, 1, comment=None)
+    text = await _record_expense(state, config, texts, 1, comment=None)
 
     assert text == "Записал: 42 000 ₸ — Продукты. По категории за месяц: 42 000 из 50 000 ₸. 💸"
 
 
-async def test_record_expense_over_limit(tmp_path: Path) -> None:
+async def test_record_expense_over_limit(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -81,16 +93,16 @@ async def test_record_expense_over_limit(tmp_path: Path) -> None:
 
     state = make_state()
     await state.update_data(amount=48000, source_id=source.id, category_id=category.id)
-    await _record_expense(state, config, 1, comment=None)
+    await _record_expense(state, config, texts, 1, comment=None)
 
     state = make_state()
     await state.update_data(amount=3200, source_id=source.id, category_id=category.id)
-    text = await _record_expense(state, config, 1, comment=None)
+    text = await _record_expense(state, config, texts, 1, comment=None)
 
     assert text == "Записал: 3 200 ₸ — Продукты. По категории за месяц: 51 200 из 50 000 ₸. 💸"
 
 
-async def test_record_expense_ignores_other_currency_in_limit(tmp_path: Path) -> None:
+async def test_record_expense_ignores_other_currency_in_limit(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -104,10 +116,10 @@ async def test_record_expense_ignores_other_currency_in_limit(tmp_path: Path) ->
 
     state = make_state()
     await state.update_data(amount=45000, source_id=rub_source.id, category_id=category.id)
-    await _record_expense(state, config, 1, comment=None)
+    await _record_expense(state, config, texts, 1, comment=None)
 
     state = make_state()
     await state.update_data(amount=1000, source_id=kzt_source.id, category_id=category.id)
-    text = await _record_expense(state, config, 1, comment=None)
+    text = await _record_expense(state, config, texts, 1, comment=None)
 
     assert text == "Записал: 1 000 ₸ — Быт. 💸"

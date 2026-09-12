@@ -2,8 +2,21 @@ services:
   willem:
     build: .
     restart: unless-stopped
+    environment:
+      - PROFILE=willem
     env_file:
-      - .env
+      - .env.willem
+    volumes:
+      - ./data:/app/data
+      - ./credentials.json:/app/credentials.json:ro
+
+  pantalone:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PROFILE=pantalone
+    env_file:
+      - .env.pantalone
     volumes:
       - ./data:/app/data
       - ./credentials.json:/app/credentials.json:ro

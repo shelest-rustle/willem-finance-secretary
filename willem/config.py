@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
-load_dotenv()
+_PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
+
+_DEFAULT_CURRENCY_OPTIONS = (("KZT", "KZT"), ("RUB", "RUB"), ("USD", "USD"), ("USDT", "USDT"))
+_DEFAULT_TYPE_OPTIONS = (("card", "Карта"), ("cash", "Наличные"), ("crypto", "Крипто"))
 
 
 def _require(name: str) -> str:
@@ -17,6 +22,8 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Config:
+    profile_name: str
+    persona: str
     bot_token: str
     owner_telegram_id: int
     allowed_telegram_ids: tuple[int, ...]
@@ -25,18 +32,73 @@ class Config:
     google_sheets_spreadsheet_id: str
     timezone: str
     log_level: str
+    seed_sources: tuple[tuple[str, str, str, str, str | None], ...]
+    seed_categories: tuple[tuple[str, tuple[str, ...]], ...]
+    seed_all_users: bool
+    categorize_all: bool
+    optional_comment: bool
+    people: dict[int, str]
+    currency_options: tuple[tuple[str, str], ...]
+    type_options: tuple[tuple[str, str], ...]
+    debt_types: tuple[str, ...]
 
 
 def _parse_additional_ids(raw: str) -> list[int]:
     return [int(part) for part in raw.split(",") if part.strip()]
 
 
+def profile_yaml_path(profile_name: str) -> Path:
+    return _PROFILES_DIR / f"{profile_name}.yaml"
+
+
+def _load_profile_yaml(profile_name: str) -> dict:
+    path = profile_yaml_path(profile_name)
+    if not path.exists():
+        raise RuntimeError(f"Профиль не найден: {path}")
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _parse_seed_sources(
+    raw: list[dict], debt_types: tuple[str, ...]
+) -> tuple[tuple[str, str, str, str, str | None], ...]:
+    result = []
+    for s in raw:
+        kind = "debt" if s["type"] in debt_types else "asset"
+        result.append((s["name"], s["type"], s["currency"], kind, s.get("owner")))
+    return tuple(result)
+
+
+def _parse_seed_categories(raw: list) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    result = []
+    for item in raw:
+        if isinstance(item, str):
+            result.append((item, ()))
+        else:
+            result.append((item["name"], tuple(item.get("subcategories", []))))
+    return tuple(result)
+
+
 def load_config() -> Config:
+    profile_name = os.environ.get("PROFILE", "willem")
+    load_dotenv(f".env.{profile_name}")
+    profile = _load_profile_yaml(profile_name)
+
     owner_telegram_id = int(_require("OWNER_TELEGRAM_ID"))
     additional_ids = _parse_additional_ids(os.environ.get("ADDITIONAL_TELEGRAM_IDS", ""))
     allowed_telegram_ids = (owner_telegram_id, *dict.fromkeys(additional_ids))
 
+    debt_types = tuple(profile.get("debt_types", []))
+    people = {int(k): v for k, v in (profile.get("people") or {}).items()}
+    currency_options = tuple(
+        tuple(pair) for pair in profile.get("currency_options", _DEFAULT_CURRENCY_OPTIONS)
+    )
+    type_options = tuple(
+        tuple(pair) for pair in profile.get("type_options", _DEFAULT_TYPE_OPTIONS)
+    )
+
     return Config(
+        profile_name=profile_name,
+        persona=profile.get("persona", profile_name),
         bot_token=_require("BOT_TOKEN"),
         owner_telegram_id=owner_telegram_id,
         allowed_telegram_ids=allowed_telegram_ids,
@@ -47,4 +109,13 @@ def load_config() -> Config:
         google_sheets_spreadsheet_id=os.environ.get("GOOGLE_SHEETS_SPREADSHEET_ID", ""),
         timezone=os.environ.get("TIMEZONE", "Asia/Almaty"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
+        seed_sources=_parse_seed_sources(profile.get("seed_sources", []), debt_types),
+        seed_categories=_parse_seed_categories(profile.get("seed_categories", [])),
+        seed_all_users=bool(profile.get("seed_all_users", False)),
+        categorize_all=bool(profile.get("categorize_all", False)),
+        optional_comment=bool(profile.get("optional_comment", False)),
+        people=people,
+        currency_options=currency_options,
+        type_options=type_options,
+        debt_types=debt_types,
     )

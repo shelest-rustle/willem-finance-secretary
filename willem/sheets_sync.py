@@ -9,20 +9,20 @@ from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
 from willem.db.connection import connect
 from willem.db.transactions import Transaction
-
-SYNC_ERROR_SUFFIX = (
-    " Ошибка при отправке в Google Sheets, добавлено в очередь на отправку ночью."
-)
+from willem.texts import Texts
 
 
 async def sync_after_insert(
     config: Config,
+    texts: Texts,
     user_id: int,
     tx: Transaction,
     *,
     source_name: str,
     category_name: str | None = None,
+    subcategory_name: str | None = None,
     target_name: str | None = None,
+    target_kind: str | None = None,
 ) -> str:
     """Пытается синхронизировать только что записанную операцию в Sheets.
 
@@ -38,10 +38,12 @@ async def sync_after_insert(
         tx,
         source_name=source_name,
         category_name=category_name,
+        subcategory_name=subcategory_name,
         target_name=target_name,
+        target_kind=target_kind,
     )
     if not success:
-        return SYNC_ERROR_SUFFIX
+        return texts.get("common.sync_error_suffix")
 
     with connect(config.db_path) as conn:
         transactions_db.mark_synced(conn, tx.id)
@@ -56,6 +58,9 @@ def resync_owner_unsynced(config: Config) -> int:
         for tx in pending:
             source = sources_db.get_source(conn, tx.source_id)
             category = categories_db.get_category(conn, tx.category_id) if tx.category_id else None
+            subcategory = (
+                categories_db.get_category(conn, tx.subcategory_id) if tx.subcategory_id else None
+            )
             target = (
                 sources_db.get_source(conn, tx.target_source_id) if tx.target_source_id else None
             )
@@ -64,7 +69,9 @@ def resync_owner_unsynced(config: Config) -> int:
                 tx,
                 source_name=source.name,
                 category_name=category.name if category else None,
+                subcategory_name=subcategory.name if subcategory else None,
                 target_name=target.name if target else None,
+                target_kind=target.kind if target else None,
             )
             if success:
                 transactions_db.mark_synced(conn, tx.id)

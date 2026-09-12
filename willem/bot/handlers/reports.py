@@ -22,6 +22,7 @@ from willem.db import transactions as transactions_db
 from willem.db.connection import connect
 from willem.db.transactions import Transaction
 from willem.formatting import currency_symbol, format_amount
+from willem.texts import Texts
 from willem.timeutil import format_local_datetime, period_bounds
 
 router = Router(name="reports")
@@ -42,10 +43,10 @@ def _category_word(count: int) -> str:
     return "категории" if count == 1 else "категориям"
 
 
-def _period_report_text(period_transactions: list[Transaction], label: str) -> str:
+def _period_report_text(period_transactions: list[Transaction], label: str, texts: Texts) -> str:
     expenses = [t for t in period_transactions if t.type == "expense"]
     if not expenses:
-        return f"{label}: трат нет."
+        return texts.get("reports.period_no_expenses", label=label)
 
     by_currency: dict[str, tuple[float, set[str]]] = {}
     for t in expenses:
@@ -53,20 +54,29 @@ def _period_report_text(period_transactions: list[Transaction], label: str) -> s
         by_currency[t.currency] = (total + t.amount, category_ids | {t.category_id})
 
     parts = [
-        f"{format_amount(total)} {currency_symbol(currency)} по {len(category_ids)} "
-        f"{_category_word(len(category_ids))}"
+        texts.get(
+            "reports.period_line",
+            total=format_amount(total),
+            symbol=currency_symbol(currency),
+            count=len(category_ids),
+            category_word=_category_word(len(category_ids)),
+        )
         for currency, (total, category_ids) in sorted(by_currency.items())
     ]
     return f"{label}: " + "; ".join(parts) + "."
 
 
-def _balances_text(balances: list[tuple[sources_db.Source, float]]) -> str:
-    if not balances:
-        return "Нет активных источников."
-
+def _balance_block(
+    balances: list[tuple[sources_db.Source, float]], texts: Texts, *, header_key: str, total_key: str
+) -> str:
     ordered = sorted(balances, key=lambda pair: pair[1], reverse=True)
     lines = [
-        f"{source.name}: {format_amount(balance)} {currency_symbol(source.currency)}"
+        texts.get(
+            "reports.balances_line",
+            source=source.name,
+            amount=format_amount(balance),
+            symbol=currency_symbol(source.currency),
+        )
         for source, balance in ordered
     ]
 
@@ -79,12 +89,43 @@ def _balances_text(balances: list[tuple[sources_db.Source, float]]) -> str:
     ]
 
     return (
-        "Остатки. ⚖️\n\n" + "\n".join(lines) + "\n\nВсего: " + ", ".join(total_parts) + "."
+        f"{texts.get(header_key)}\n\n"
+        + "\n".join(lines)
+        + f"\n\n{texts.get(total_key)}"
+        + ", ".join(total_parts)
+        + "."
     )
+
+
+def _balances_text(balances: list[tuple[sources_db.Source, float]], texts: Texts) -> str:
+    """Активы (`kind != 'debt'`) и долги (`kind == 'debt'`) — отдельными блоками, не смешивая
+    их в общий итог (см. UPGRADE_spec.md, 9.5). Для профилей без долговых источников
+    (например `willem`) второй блок никогда не появляется — данных для него не бывает."""
+    assets = [(s, b) for s, b in balances if s.kind != "debt"]
+    debts = [(s, b) for s, b in balances if s.kind == "debt"]
+
+    if not assets and not debts:
+        return texts.get("reports.balances_empty")
+
+    blocks = []
+    if assets:
+        blocks.append(
+            _balance_block(
+                assets, texts, header_key="reports.balances_header", total_key="reports.balances_total_prefix"
+            )
+        )
+    if debts:
+        blocks.append(
+            _balance_block(
+                debts, texts, header_key="reports.debts_header", total_key="reports.debts_total_prefix"
+            )
+        )
+    return "\n\n".join(blocks)
 
 
 def _transaction_summary(
     tx: Transaction,
+    texts: Texts,
     *,
     source_name: str,
     category_name: str | None = None,
@@ -94,26 +135,39 @@ def _transaction_summary(
     amount = format_amount(tx.amount)
 
     if tx.type == "expense":
-        return f"💸 {amount} {symbol} — {category_name} ({source_name})"
+        return texts.get(
+            "reports.summary_expense", amount=amount, symbol=symbol, category=category_name,
+            source=source_name,
+        )
     if tx.type == "income":
-        return f"💰 {amount} {symbol} — {source_name}"
+        return texts.get("reports.summary_income", amount=amount, symbol=symbol, source=source_name)
     if tx.type == "transfer":
         if tx.currency == tx.target_currency:
-            return f"🔄 {amount} {symbol} {source_name} → {target_name}"
+            return texts.get(
+                "reports.summary_transfer_same",
+                amount=amount, symbol=symbol, source=source_name, target=target_name,
+            )
         target_amount = format_amount(tx.target_amount)
         target_symbol = currency_symbol(tx.target_currency)
-        return f"🔄 {amount} {symbol} {source_name} → {target_amount} {target_symbol} {target_name}"
+        return texts.get(
+            "reports.summary_transfer_diff",
+            amount=amount, symbol=symbol, source=source_name,
+            target_amount=target_amount, target_symbol=target_symbol, target=target_name,
+        )
 
     sign = "+" if tx.amount > 0 else ""
-    return f"⚖️ {sign}{amount} {symbol} — {source_name}"
+    return texts.get(
+        "reports.summary_adjustment", sign=sign, amount=amount, symbol=symbol, source=source_name
+    )
 
 
-def _resolve_summary(conn, tx: Transaction) -> str:
+def _resolve_summary(conn, tx: Transaction, texts: Texts) -> str:
     source = sources_db.get_source(conn, tx.source_id)
     category = categories_db.get_category(conn, tx.category_id) if tx.category_id else None
     target = sources_db.get_source(conn, tx.target_source_id) if tx.target_source_id else None
     return _transaction_summary(
         tx,
+        texts,
         source_name=source.name,
         category_name=category.name if category else None,
         target_name=target.name if target else None,
@@ -141,29 +195,29 @@ def _edit_last_keyboard(tx_type: str) -> InlineKeyboardMarkup:
 
 
 @router.message(or_f(Command("today"), F.text == TODAY_BUTTON))
-async def show_today(message: Message, state: FSMContext, config: Config) -> None:
+async def show_today(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     start, end = period_bounds("today", config.timezone)
     with connect(config.db_path) as conn:
         period_transactions = transactions_db.sum_by_type_and_period(
             conn, message.from_user.id, start, end
         )
-    await message.answer(_period_report_text(period_transactions, "Сегодня"))
+    await message.answer(_period_report_text(period_transactions, texts.get("reports.label_today"), texts))
 
 
 @router.message(or_f(Command("week"), F.text == WEEK_BUTTON))
-async def show_week(message: Message, state: FSMContext, config: Config) -> None:
+async def show_week(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     start, end = period_bounds("week", config.timezone)
     with connect(config.db_path) as conn:
         period_transactions = transactions_db.sum_by_type_and_period(
             conn, message.from_user.id, start, end
         )
-    await message.answer(_period_report_text(period_transactions, "За неделю"))
+    await message.answer(_period_report_text(period_transactions, texts.get("reports.label_week"), texts))
 
 
 @router.message(or_f(Command("balances"), F.text == BALANCES_BUTTON))
-async def show_balances(message: Message, state: FSMContext, config: Config) -> None:
+async def show_balances(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
         active_sources = sources_db.list_sources(conn, message.from_user.id)
@@ -171,126 +225,126 @@ async def show_balances(message: Message, state: FSMContext, config: Config) -> 
             (source, transactions_db.get_source_balance(conn, source.id))
             for source in active_sources
         ]
-    await message.answer(_balances_text(balances))
+    await message.answer(_balances_text(balances, texts))
 
 
 @router.message(or_f(Command("last"), F.text == LAST_BUTTON))
-async def show_last(message: Message, state: FSMContext, config: Config) -> None:
+async def show_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
         recent = transactions_db.list_recent(conn, message.from_user.id, limit=5)
         lines = [
-            f"{format_local_datetime(tx.created_at_utc, config.timezone)} · {_resolve_summary(conn, tx)}"
+            f"{format_local_datetime(tx.created_at_utc, config.timezone)} · {_resolve_summary(conn, tx, texts)}"
             for tx in recent
         ]
 
     if not lines:
-        await message.answer("Операций пока нет. 📋")
+        await message.answer(texts.get("reports.last_empty"))
         return
-    await message.answer("Последние операции. 📋\n\n" + "\n".join(lines))
+    await message.answer(f"{texts.get('reports.last_header')}\n\n" + "\n".join(lines))
 
 
 @router.message(Command("delete_last"))
-async def delete_last(message: Message, state: FSMContext, config: Config) -> None:
+async def delete_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
         recent = transactions_db.list_recent(conn, message.from_user.id, limit=1)
         if not recent:
-            await message.answer("Операций пока нет. 🗑")
+            await message.answer(texts.get("reports.delete_empty"))
             return
         tx = recent[0]
-        summary = _resolve_summary(conn, tx)
+        summary = _resolve_summary(conn, tx, texts)
         transactions_db.soft_delete_transaction(conn, tx.id)
-    await message.answer(f"Удалил: {summary}. 🗑")
+    await message.answer(texts.get("reports.deleted", summary=summary))
 
 
 @router.message(Command("edit_last"))
-async def edit_last(message: Message, state: FSMContext, config: Config) -> None:
+async def edit_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
         recent = transactions_db.list_recent(conn, message.from_user.id, limit=1)
         if not recent:
-            await message.answer("Операций пока нет. ✏️")
+            await message.answer(texts.get("reports.edit_empty"))
             return
         tx = recent[0]
-        summary = _resolve_summary(conn, tx)
+        summary = _resolve_summary(conn, tx, texts)
 
     await state.update_data(transaction_id=tx.id, currency=tx.currency)
     await message.answer(
-        f"Последняя операция: {summary}. Что изменить?",
+        texts.get("reports.edit_prompt", summary=summary),
         reply_markup=_edit_last_keyboard(tx.type),
     )
 
 
 @router.callback_query(F.data == EDIT_AMOUNT_CB)
-async def start_edit_amount(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_edit_amount(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
     await state.set_state(EditLastFlow.entering_amount)
-    await callback.message.edit_text("Новая сумма. ✏️")
+    await callback.message.edit_text(texts.get("reports.edit_amount_prompt"))
     await callback.answer()
 
 
 @router.message(EditLastFlow.entering_amount, F.text.regexp(EXPENSE_AMOUNT_RE))
-async def finish_edit_amount(message: Message, state: FSMContext, config: Config) -> None:
-    text = await _apply_amount_edit(state, config, parse_amount(message.text))
+async def finish_edit_amount(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
+    text = await _apply_amount_edit(state, config, texts, parse_amount(message.text))
     await message.answer(text)
 
 
 @router.callback_query(F.data == EDIT_COMMENT_CB)
-async def start_edit_comment(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_edit_comment(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
     await state.set_state(EditLastFlow.entering_comment)
-    await callback.message.edit_text("Новый комментарий. 💬")
+    await callback.message.edit_text(texts.get("reports.edit_comment_prompt"))
     await callback.answer()
 
 
 @router.message(EditLastFlow.entering_comment, F.text)
-async def finish_edit_comment(message: Message, state: FSMContext, config: Config) -> None:
-    text = await _apply_comment_edit(state, config, message.text)
+async def finish_edit_comment(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
+    text = await _apply_comment_edit(state, config, texts, message.text)
     await message.answer(text)
 
 
 @router.callback_query(F.data == EDIT_CATEGORY_CB)
-async def start_edit_category(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def start_edit_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
     with connect(config.db_path) as conn:
         active_categories = categories_db.list_categories(conn, callback.from_user.id)
     await state.set_state(EditLastFlow.choosing_category)
     keyboard = build_choice_keyboard(
         [(c.id, c.name) for c in active_categories], callback_prefix=EDIT_CATEGORY_PREFIX
     )
-    await callback.message.edit_text("Выберите категорию. 🗂", reply_markup=keyboard)
+    await callback.message.edit_text(texts.get("common.choose_category"), reply_markup=keyboard)
     await callback.answer()
 
 
 @router.callback_query(
     EditLastFlow.choosing_category, F.data.startswith(f"{EDIT_CATEGORY_PREFIX}:")
 )
-async def finish_edit_category(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def finish_edit_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
     category_id = callback.data.removeprefix(f"{EDIT_CATEGORY_PREFIX}:")
-    text = await _apply_category_edit(state, config, category_id)
+    text = await _apply_category_edit(state, config, texts, category_id)
     await callback.message.edit_text(text)
     await callback.answer()
 
 
-async def _apply_amount_edit(state: FSMContext, config: Config, amount: float) -> str:
+async def _apply_amount_edit(state: FSMContext, config: Config, texts: Texts, amount: float) -> str:
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
         transactions_db.update_transaction(conn, data["transaction_id"], amount=amount)
     symbol = currency_symbol(data["currency"])
-    return f"Сумма обновлена: {format_amount(amount)} {symbol}. ✏️"
+    return texts.get("reports.amount_updated", amount=format_amount(amount), symbol=symbol)
 
 
-async def _apply_comment_edit(state: FSMContext, config: Config, comment: str) -> str:
+async def _apply_comment_edit(state: FSMContext, config: Config, texts: Texts, comment: str) -> str:
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
         transactions_db.update_transaction(conn, data["transaction_id"], comment=comment)
-    return f"Комментарий обновлён: «{comment}». 💬"
+    return texts.get("reports.comment_updated", comment=comment)
 
 
-async def _apply_category_edit(state: FSMContext, config: Config, category_id: str) -> str:
+async def _apply_category_edit(state: FSMContext, config: Config, texts: Texts, category_id: str) -> str:
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
         category = categories_db.get_category(conn, category_id)
         transactions_db.update_transaction(conn, data["transaction_id"], category_id=category_id)
-    return f"Категория обновлена: «{category.name}». 🗂"
+    return texts.get("reports.category_updated", name=category.name)

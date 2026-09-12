@@ -21,6 +21,8 @@
 - **Мультипользовательность** — у каждого разрешённого Telegram-пользователя полностью свой
   леджер (источники/категории/транзакции не пересекаются); синк в Google Sheets — только
   для владельца бота
+- **Профили** — один кодбейз может запускать несколько независимых ботов (свой токен, своя
+  таблица, свой «персонаж»/тексты), см. раздел «Профили» ниже
 
 ## Стек
 
@@ -34,13 +36,50 @@
 
 ```bash
 poetry install
-cp .env.example .env   # заполнить реальными значениями, см. ниже
-poetry run pytest -q          # тесты
-poetry run ruff check .       # линтер
-poetry run python main.py     # поднимет polling
+cp .env.willem.example .env.willem   # заполнить реальными значениями, см. ниже
+poetry run pytest -q                 # тесты
+poetry run ruff check .              # линтер
+PROFILE=willem poetry run python main.py    # поднимет polling для профиля willem
 ```
 
-## Переменные окружения (`.env`)
+`PROFILE` можно не указывать — по умолчанию `willem`.
+
+## Профили
+
+Каждый бот на этом кодбейзе — это **профиль**: свой Telegram-токен, своя Google-таблица, свой
+набор дефолтных источников/категорий и (опционально) свой голос в сообщениях. Один процесс = один
+профиль = один запущенный бот; несколько профилей — это несколько параллельно запущенных процессов
+(см. `docker-compose.yml`, там один сервис на профиль).
+
+Данные профиля разложены по двум местам:
+
+- **`profiles/<profile>.yaml`** — коммитится в git, без секретов: имя персонажа (`persona`),
+  `seed_sources`/`seed_categories` (сидятся один раз при первом старте владельцу профиля,
+  аналог прежних `DEFAULT_SOURCES`/`DEFAULT_CATEGORIES`), и опциональная секция `messages:` —
+  переопределения любых текстов бота поверх базового набора в `willem/texts_base.yaml`.
+- **`.env.<profile>`** — секреты, в `.gitignore` (никогда не коммитить, переносить на сервер
+  через `scp`, не через вставку в редактор): `BOT_TOKEN`, `OWNER_TELEGRAM_ID`,
+  `ADDITIONAL_TELEGRAM_IDS`, `DB_PATH`, `GOOGLE_SHEETS_CREDENTIALS_PATH`,
+  `GOOGLE_SHEETS_SPREADSHEET_ID`, `TIMEZONE`, `LOG_LEVEL` — те же переменные, что раньше лежали
+  в едином `.env`.
+
+Выбор профиля — переменная окружения `PROFILE` (по умолчанию `willem`): она определяет, какой
+`.env.<PROFILE>` подхватить (`load_dotenv`) и какой `profiles/<PROFILE>.yaml` прочитать.
+
+### Как добавить новый профиль
+
+1. Создать бота через @BotFather → `BOT_TOKEN`.
+2. Создать Google-таблицу, лист «Транзакции» (или другую структуру, если профилю нужна своя —
+   тогда потребуется отдельная ветка в `willem/sheets.py`), выдать доступ Editor тому же service
+   account, что и у остальных профилей (можно переиспользовать один `credentials.json`).
+3. Скопировать `.env.willem.example` → `.env.<profile>`, заполнить реальными значениями.
+4. Создать `profiles/<profile>.yaml` (см. `profiles/willem.yaml` как образец) — как минимум
+   `name`, `persona`, `seed_sources`, `seed_categories`; `messages: {}`, если свой голос не нужен.
+5. Добавить сервис в `docker-compose.yml` (скопировать блок `willem`, поменять `PROFILE` и
+   `env_file`).
+6. `scp` новый `.env.<profile>` на сервер, `docker compose up -d`.
+
+## Переменные окружения (`.env.<profile>`)
 
 | Переменная | Назначение |
 |---|---|
@@ -82,8 +121,8 @@ docker compose build
 docker compose up -d
 ```
 
-`.env` и `credentials.json` не попадают в git — их нужно перенести на сервер отдельно (`scp`),
-на образ они тоже не попадают (`.dockerignore`).
+`.env.<profile>` и `credentials.json` не попадают в git — их нужно перенести на сервер отдельно
+(`scp`), на образ они тоже не попадают (`.dockerignore`).
 
 Для постоянной работы (переживает ребут сервера) — systemd-юнит [`deploy/willem-bot.service`](deploy/willem-bot.service),
 оборачивающий `docker compose up -d` / `down`:

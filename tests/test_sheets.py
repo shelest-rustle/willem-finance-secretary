@@ -18,6 +18,8 @@ def make_tx(**overrides) -> Transaction:
         source_id="s1",
         target_source_id=None,
         category_id="c1",
+        subcategory_id=None,
+        who=None,
         comment="Продукты на неделю",
         created_at_utc="2026-07-16T08:23:00+00:00",
         synced=False,
@@ -81,8 +83,74 @@ def test_row_for_transaction_transfer_cross_currency() -> None:
     ]
 
 
+def test_row_for_transaction_household_expense_with_subcategory() -> None:
+    tx = make_tx(who="Лика")
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Kaspi Лики KZT",
+        category_name="Домашняя еда",
+        subcategory_name="Продукты",
+        target_name=None,
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row == [
+        "16.07.2026 13:23",
+        "Расход",
+        "Лика",
+        "Домашняя еда",
+        "Продукты",
+        "Kaspi Лики KZT",
+        "",
+        3400.0,
+        "KZT",
+        1.0,
+        3400.0,
+        "Продукты на неделю",
+        "tx-1",
+    ]
+
+
+def test_row_for_transaction_household_debt_payment_label() -> None:
+    tx = make_tx(
+        type="transfer", category_id=None, comment=None, target_amount=3400.0, target_currency="KZT"
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Kaspi Лики KZT",
+        target_name="Т-Кредит Лики",
+        target_kind="debt",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[1] == "Погашение долга/кредита"
+    assert row[5] == "Kaspi Лики KZT"
+    assert row[6] == "Т-Кредит Лики"
+
+
+def test_row_for_transaction_household_kzt_equivalent_blank_between_two_foreign_currencies() -> None:
+    tx = make_tx(
+        type="transfer",
+        currency="RUB",
+        category_id=None,
+        comment=None,
+        target_amount=50.0,
+        target_currency="USD",
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Карта Лики RUB",
+        target_name="Кошелёк USD",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[9] == ""  # курс к KZT
+    assert row[10] == ""  # сумма в KZT
+
+
 class FakeConfig:
     timezone = "Asia/Almaty"
+    profile_name = "willem"
 
 
 class FakeWorksheet:

@@ -10,6 +10,7 @@ from willem.bot.handlers import categories, expense, income, reports, sources, s
 from willem.bot.middlewares import AllowedUsersMiddleware
 from willem.config import Config
 from willem.scheduler import create_scheduler
+from willem.texts import Texts
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,15 @@ def create_dispatcher(config: Config) -> Dispatcher:
     return dp
 
 
-async def run_bot(config: Config) -> None:
+async def run_bot(config: Config, texts: Texts) -> None:
     bot = Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = create_dispatcher(config)
 
     scheduler = create_scheduler(config)
     scheduler.start()
 
-    logger.info("Запуск polling")
+    logger.info("Запуск polling (профиль: %s)", config.profile_name)
     try:
-        await dp.start_polling(bot, config=config)
+        await dp.start_polling(bot, config=config, texts=texts)
     finally:
         scheduler.shutdown(wait=False)

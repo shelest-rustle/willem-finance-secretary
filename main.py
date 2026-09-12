@@ -7,8 +7,8 @@ from willem.bot.app import run_bot
 
 
 def main() -> None:
-    config = bootstrap()
-    asyncio.run(run_bot(config))
+    config, texts = bootstrap()
+    asyncio.run(run_bot(config, texts))
 
 
 if __name__ == "__main__":

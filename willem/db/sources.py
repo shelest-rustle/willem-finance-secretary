@@ -12,6 +12,8 @@ class Source:
     name: str
     type: str
     currency: str
+    kind: str
+    owner: str | None
     is_active: bool
 
     @classmethod
@@ -22,21 +24,36 @@ class Source:
             name=row["name"],
             type=row["type"],
             currency=row["currency"],
+            kind=row["kind"],
+            owner=row["owner"],
             is_active=bool(row["is_active"]),
         )
 
 
 def create_source(
-    conn: sqlite3.Connection, user_id: int, name: str, type: str, currency: str = "KZT"
+    conn: sqlite3.Connection,
+    user_id: int,
+    name: str,
+    type: str,
+    currency: str = "KZT",
+    kind: str = "asset",
+    owner: str | None = None,
 ) -> Source:
     source_id = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO sources (id, user_id, name, type, currency, is_active) "
-        "VALUES (?, ?, ?, ?, ?, 1)",
-        (source_id, user_id, name, type, currency),
+        "INSERT INTO sources (id, user_id, name, type, currency, kind, owner, is_active) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+        (source_id, user_id, name, type, currency, kind, owner),
     )
     return Source(
-        id=source_id, user_id=user_id, name=name, type=type, currency=currency, is_active=True
+        id=source_id,
+        user_id=user_id,
+        name=name,
+        type=type,
+        currency=currency,
+        kind=kind,
+        owner=owner,
+        is_active=True,
     )
 
 

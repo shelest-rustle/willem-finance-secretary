@@ -1,0 +1,94 @@
+# Базовый набор текстов бота — дефолт для всех профилей, если профиль не переопределяет ключ
+# в своей секции messages:. Дословно перенесённые текущие формулировки (голос "Виллема").
+# Плейсхолдеры в {фигурных скобках} подставляются через str.format(**kwargs) в коде хендлера.
+
+start:
+  greeting: "Виллем на связи. 👋"
+
+common:
+  no_active_sources: "Нет активных источников. Добавьте через /sources."
+  choose_source_expense: "Источник списания. 💳"
+  choose_source_income: "Источник зачисления. 💳"
+  choose_category: "Выберите категорию. 🗂"
+  choose_subcategory: "Выберите подкатегорию. 🗂"
+  choose_limit_period: "Период лимита."
+  choose_currency: "Валюта."
+  enter_new_name: "Новое название. ✏️"
+  renamed: "Переименовал в «{name}». ✏️"
+  archived: "Архивировал «{name}». 🗄"
+  no_active_categories: "Нет активных категорий. Добавьте через /categories."
+  sync_error_suffix: " Ошибка при отправке в Google Sheets, добавлено в очередь на отправку ночью."
+
+expense:
+  enter_comment: "Оставьте комментарий к расходу. 💬"
+  recorded: "Записал: {amount} {symbol} — {category}"
+  limit_warning: ". По категории за {period}: {total} из {limit} {symbol}"
+  done_suffix: " 💸"
+
+income:
+  enter_comment: "Оставьте комментарий к доходу. 💬"
+  recorded: "Пополнил: +{amount} {symbol} — {source}"
+  done_suffix: " 💰"
+
+transfer:
+  enter_amount: "Укажите сумму списания. 🔄"
+  not_enough_sources: "Нужно минимум два активных источника для перевода."
+  no_second_source: "Нет второго источника для перевода."
+  enter_target_amount: "Сколько зачислилось на {target_name}? 💱"
+  enter_comment: "Оставьте комментарий к переводу. 💬"
+  recorded_same_currency: "Записал перевод: {amount} {symbol_from} {source_from} → {source_to}"
+  recorded_cross_currency: "Записал перевод: {amount} {symbol_from} {source_from} → {target_amount} {symbol_to} {source_to}"
+  done_suffix: " 🔄"
+
+categories:
+  detail_no_limit: "«{name}». Лимит не задан."
+  detail_with_limit: "«{name}». Лимит на {period}: {limit}."
+  list_title: "Категории. 🗂"
+  not_found: "Категория не найдена."
+  enter_name: "Название новой категории. 🗂"
+  enter_limit_amount: "Лимит на период (сумма) или «Без лимита». 🎯"
+  added: "Добавил категорию: «{name}». 🗂"
+  edit_limit_prompt: "Новый лимит (сумма) или «Без лимита». 🎯"
+  limit_removed: "Лимит убран. 🎯"
+  limit_updated: "Лимит обновлён: {amount} на {period}. 🎯"
+
+sources:
+  detail: "«{name}». {type_label} · {currency}.\nБаланс: {amount} {symbol}."
+  list_title: "Источники. 💳"
+  not_found: "Источник не найден."
+  enter_name: "Название нового источника. 💳"
+  choose_type: "Тип источника."
+  added: "Добавил источник: «{name}». 💳"
+  edit_currency_prompt: "Новая валюта."
+  currency_updated: "Валюта обновлена: {currency}. 💱"
+  adjust_prompt: "Текущий остаток: {balance} {symbol}.\nВведите фактический остаток. ⚖️"
+  adjusted: "Остаток обновлён: {amount} {symbol}.{suffix} ⚖️"
+  adjustment_comment: "Коррекция остатка"
+
+reports:
+  label_today: "Сегодня"
+  label_week: "За неделю"
+  period_no_expenses: "{label}: трат нет."
+  period_line: "{total} {symbol} по {count} {category_word}"
+  balances_header: "Остатки. ⚖️"
+  balances_empty: "Нет активных источников."
+  balances_line: "{source}: {amount} {symbol}"
+  balances_total_prefix: "Всего: "
+  debts_header: "Долги. ⚖️"
+  debts_total_prefix: "Итого долгов: "
+  summary_expense: "💸 {amount} {symbol} — {category} ({source})"
+  summary_income: "💰 {amount} {symbol} — {source}"
+  summary_transfer_same: "🔄 {amount} {symbol} {source} → {target}"
+  summary_transfer_diff: "🔄 {amount} {symbol} {source} → {target_amount} {target_symbol} {target}"
+  summary_adjustment: "⚖️ {sign}{amount} {symbol} — {source}"
+  last_header: "Последние операции. 📋"
+  last_empty: "Операций пока нет. 📋"
+  delete_empty: "Операций пока нет. 🗑"
+  deleted: "Удалил: {summary}. 🗑"
+  edit_empty: "Операций пока нет. ✏️"
+  edit_prompt: "Последняя операция: {summary}. Что изменить?"
+  edit_amount_prompt: "Новая сумма. ✏️"
+  edit_comment_prompt: "Новый комментарий. 💬"
+  amount_updated: "Сумма обновлена: {amount} {symbol}. ✏️"
+  comment_updated: "Комментарий обновлён: «{comment}». 💬"
+  category_updated: "Категория обновлена: «{name}». 🗂"

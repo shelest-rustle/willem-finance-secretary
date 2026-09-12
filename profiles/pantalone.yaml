@@ -1,0 +1,189 @@
+name: pantalone
+persona: "Регистратор"
+
+# Профильная логика домохозяйства (см. UPGRADE_spec.md, часть 2):
+categorize_all: true      # категория/подкатегория есть и у income, и у transfer, не только у expense
+optional_comment: true    # комментарий можно пропустить кнопкой (для expense/income/transfer)
+seed_all_users: true      # сид заводится и владельцу, и доп. пользователю — все источники всем
+
+people:
+  431744401: "Лика"
+  1459561428: "Ярослав"
+  540181178: "Админ"
+
+# Типы источников, которые считаются долговыми (влияет на sources.kind при сидировании
+# и при ручном добавлении через /sources — см. willem/config.py::_parse_seed_sources).
+debt_types:
+  - "Кредитная карта"
+  - "Кредит"
+  - "Кредитный лимит"
+  - "Долг человеку"
+
+currency_options:
+  - ["KZT", "KZT"]
+  - ["RUB", "RUB"]
+  - ["USD", "USD"]
+  - ["EUR", "EUR"]
+  - ["CNY", "CNY"]
+
+type_options:
+  - ["Дебетовая карта", "Дебетовая карта"]
+  - ["Наличные", "Наличные"]
+  - ["Накопительный счёт", "Накопительный счёт"]
+  - ["Депозит", "Депозит"]
+  - ["Кредитная карта", "Кредитная карта"]
+  - ["Кредит", "Кредит"]
+  - ["Кредитный лимит", "Кредитный лимит"]
+  - ["Долг человеку", "Долг человеку"]
+
+# Источники — перенесены из profile2_sources_seed.xlsx. "owner" — чисто информационно
+# (см. /sources), сидятся всем пользователям профиля целиком (seed_all_users: true).
+seed_sources:
+  - { name: "Kaspi Ярослав KZT", type: "Дебетовая карта", currency: "KZT", owner: "Ярослав" }
+  - { name: "BCC Лики KZT", type: "Дебетовая карта", currency: "KZT", owner: "Лика" }
+  - { name: "Наличные KZT", type: "Наличные", currency: "KZT", owner: "Семья" }
+  - { name: "Накопительный счёт KZT", type: "Накопительный счёт", currency: "KZT", owner: "Семья" }
+  - { name: "Депозит 3 мес KZT", type: "Депозит", currency: "KZT", owner: "Семья" }
+  - { name: "Карта Лики RUB", type: "Дебетовая карта", currency: "RUB", owner: "Лика" }
+  - { name: "Карта Ярослава RUB", type: "Дебетовая карта", currency: "RUB", owner: "Ярослав" }
+  - { name: "Т-Кредитка Лики", type: "Кредитная карта", currency: "RUB", owner: "Лика" }
+  - { name: "М-Кредитка Лики", type: "Кредитная карта", currency: "RUB", owner: "Лика" }
+  - { name: "Т-Кредитка Ярослава", type: "Кредитная карта", currency: "RUB", owner: "Ярослав" }
+  - { name: "Т-Кредит Лики", type: "Кредит", currency: "RUB", owner: "Лика" }
+  - { name: "М-Кредит Лики", type: "Кредит", currency: "RUB", owner: "Лика" }
+  - { name: "М-Кредит Ярослава", type: "Кредит", currency: "RUB", owner: "Ярослав" }
+  - { name: "Т-Кубышка Лики", type: "Кредитный лимит", currency: "RUB", owner: "Лика" }
+  - { name: "Т-Кубышка Ярослава", type: "Кредитный лимит", currency: "RUB", owner: "Ярослав" }
+  - { name: "Долг Роме", type: "Долг человеку", currency: "RUB", owner: "Семья" }
+  - { name: "Долг Артёму", type: "Долг человеку", currency: "RUB", owner: "Семья" }
+  - { name: "Kaspi Лики KZT", type: "Дебетовая карта", currency: "KZT", owner: "Лика" }
+  - { name: "Freedom Лики KZT", type: "Дебетовая карта", currency: "KZT", owner: "Лика" }
+
+# Категории — перенесены из profile2_categories_seed.txt + profile2_detailed_categories_seed.txt.
+seed_categories:
+  - name: "Дом"
+    subcategories: ["Аренда", "Коммуналка"]
+  - name: "Быт"
+    subcategories: ["Комфорт и уют", "Ремонт", "Уходовое", "Хозяйственное"]
+  - name: "Домашняя еда"
+    subcategories: ["Вкусняшки", "Перекусы", "Продукты"]
+  - name: "Еда вне дома"
+    subcategories: ["Доставка еды", "Заведения"]
+  - name: "Одежда и обувь"
+    subcategories: ["Аксессуары", "Нижнее бельё", "Обувь", "Одежда"]
+  - name: "Транспорт"
+    subcategories: ["Автобус", "Метро", "Такси", "Курьер и доставка"]
+  - name: "Развлечения"
+    subcategories: ["Активный отдых", "Игры", "Концерты", "Культура", "Хобби"]
+  - name: "Здоровье"
+    subcategories: ["Врачи", "Диагностика", "Лекарства", "Психиатрия", "Психотерапия", "Спорт", "Стоматология"]
+  - name: "Красота"
+    subcategories: ["Маникюр", "Салон"]
+  - name: "Подписки"
+    subcategories: ["Кино и музыка", "Нейронки", "Полезное"]
+  - name: "Интернет и связь"
+    subcategories: ["Интернет", "Мобильная связь"]
+  - name: "Киба"
+    subcategories: ["Ветеринария", "Груминг", "Корм", "Амуниция и одежда"]
+  - name: "Образование"
+    subcategories: ["Канцелярия", "Книги", "Курсы", "Репетитор"]
+  - name: "Табак"
+    subcategories: ["Кальян", "Стики"]
+  - name: "Подарки"
+    subcategories: ["Друзьям", "Коллегам", "Родственникам", "Себе"]
+  - name: "Техника"
+    subcategories: ["Бытовая техника", "Электроника"]
+  - name: "Другое"
+    subcategories: ["Прочий расход"]
+  - name: "Доходы"
+    subcategories: ["Зарплата", "Аванс", "Проценты по депозиту", "Кэшбэк", "Возврат долга", "Подарки и помощь", "Прочий доход"]
+  - name: "Кредиты и долги"
+    subcategories: ["Платёж по кредиту", "Платёж по кредитке", "Проценты и комиссии", "Возврат долга человеку", "Погашение кубышки"]
+  - name: "Переводы"
+    subcategories: ["Между своими счетами", "Пополнение депозита", "Снятие наличных"]
+
+# Голос "Панталоне" (Fatui Harbinger, Регистратор Северного банка, Genshin Impact):
+# холодный, договорной, экономический регистр — деньги как "кровь мира", счета как
+# "артерии"; лёгкое, тщательно обоснованное превосходство вместо тепла. Без эмодзи
+# и восклицательных знаков (по просьбе Лики).
+messages:
+  start.greeting: "Регистратор к вашим услугам. Излагайте ваши операции."
+
+  common.no_active_sources: "Активов не обнаружено. Откройте счёт через /sources — без него не о чем договариваться."
+  common.choose_source_expense: "Назовите счёт списания."
+  common.choose_source_income: "Назовите счёт зачисления."
+  common.choose_category: "Определите статью."
+  common.choose_subcategory: "Определите подстатью."
+  common.choose_limit_period: "Период предела."
+  common.choose_currency: "Валюта расчёта."
+  common.enter_new_name: "Новое наименование."
+  common.renamed: "Переименовано в «{name}»."
+  common.archived: "Актив «{name}» выведен из оборота."
+  common.no_active_categories: "Статей расходов не обнаружено. Заведите через /categories."
+  common.sync_error_suffix: " Синхронизация с реестром не удалась — операция поставлена в очередь."
+
+  expense.enter_comment: "Обоснуйте операцию комментарием."
+  expense.recorded: "Зафиксировано: {amount} {symbol} — статья «{category}»"
+  expense.limit_warning: ". Показатель по статье за {period}: {total} из {limit} {symbol} — на грани допустимого"
+  expense.done_suffix: ""
+
+  income.enter_comment: "Обоснуйте поступление комментарием."
+  income.recorded: "Приход подтверждён: +{amount} {symbol} — счёт «{source}»"
+  income.done_suffix: ""
+
+  transfer.enter_amount: "Укажите сумму перемещения."
+  transfer.not_enough_sources: "Для перемещения средств требуется не менее двух активов."
+  transfer.no_second_source: "Второго актива для перемещения не найдено."
+  transfer.enter_target_amount: "Сколько поступит на счёт «{target_name}»?"
+  transfer.enter_comment: "Обоснуйте перемещение комментарием."
+  transfer.recorded_same_currency: "Перемещение зафиксировано: {amount} {symbol_from} {source_from} → {source_to}"
+  transfer.recorded_cross_currency: "Перемещение зафиксировано: {amount} {symbol_from} {source_from} → {target_amount} {symbol_to} {source_to}"
+  transfer.done_suffix: ""
+
+  categories.detail_no_limit: "«{name}». Предел не установлен."
+  categories.detail_with_limit: "«{name}». Предел на {period}: {limit}."
+  categories.list_title: "Статьи расходов."
+  categories.not_found: "Статья не найдена."
+  categories.enter_name: "Наименование новой статьи."
+  categories.enter_limit_amount: "Обозначьте предел на период суммой, либо воспользуйтесь опцией «Без лимита»."
+  categories.added: "Статья учреждена: «{name}»."
+  categories.edit_limit_prompt: "Обозначьте новый предел суммой, либо воспользуйтесь опцией «Без лимита»."
+  categories.limit_removed: "Предел снят."
+  categories.limit_updated: "Предел обновлён: {amount} на {period}."
+
+  sources.detail: "«{name}». {type_label} · {currency}.\nОстаток: {amount} {symbol}."
+  sources.list_title: "Активы."
+  sources.not_found: "Актив не найден."
+  sources.enter_name: "Наименование нового актива."
+  sources.choose_type: "Тип актива."
+  sources.added: "Актив учреждён: «{name}»."
+  sources.edit_currency_prompt: "Новая валюта расчёта."
+  sources.currency_updated: "Валюта обновлена: {currency}."
+  sources.adjust_prompt: "Текущий остаток: {balance} {symbol}.\nУкажите фактический остаток."
+  sources.adjusted: "Остаток скорректирован: {amount} {symbol}.{suffix}"
+
+  reports.label_today: "Сегодня"
+  reports.label_week: "За неделю"
+  reports.period_no_expenses: "{label}: расходов не зафиксировано."
+  reports.balances_header: "Кровоток. Деньги — кровь мира, счета — его артерии."
+  reports.balances_empty: "Артерий не обнаружено — без них кровоток невозможен."
+  reports.balances_line: "«{source}»: {amount} {symbol}"
+  reports.balances_total_prefix: "Совокупный пульс: "
+  reports.debts_header: "Долговые обязательства."
+  reports.debts_total_prefix: "Итого к возмещению: "
+  reports.summary_expense: "Расход: {amount} {symbol} — {category} ({source})"
+  reports.summary_income: "Приход: {amount} {symbol} — {source}"
+  reports.summary_transfer_same: "Перемещение: {amount} {symbol} {source} → {target}"
+  reports.summary_transfer_diff: "Перемещение: {amount} {symbol} {source} → {target_amount} {target_symbol} {target}"
+  reports.summary_adjustment: "Коррекция: {sign}{amount} {symbol} — {source}"
+  reports.last_header: "Реестр последних операций."
+  reports.last_empty: "Операций не зафиксировано."
+  reports.delete_empty: "Операций не зафиксировано."
+  reports.deleted: "Операция аннулирована: {summary}."
+  reports.edit_empty: "Операций не зафиксировано."
+  reports.edit_prompt: "Последняя операция: {summary}. Что подлежит пересмотру?"
+  reports.edit_amount_prompt: "Новая сумма."
+  reports.edit_comment_prompt: "Новый комментарий."
+  reports.amount_updated: "Сумма пересмотрена: {amount} {symbol}."
+  reports.comment_updated: "Комментарий пересмотрен: «{comment}»."
+  reports.category_updated: "Статья пересмотрена: «{name}»."

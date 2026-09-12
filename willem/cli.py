@@ -8,7 +8,7 @@ from willem.sheets_sync import resync_owner_unsynced
 
 
 def resync(_args: argparse.Namespace) -> None:
-    config = bootstrap()
+    config, _texts = bootstrap()
     synced_count = resync_owner_unsynced(config)
     print(f"Синхронизировано операций: {synced_count}")
 

@@ -24,6 +24,8 @@ class Transaction:
     source_id: str
     target_source_id: str | None
     category_id: str | None
+    subcategory_id: str | None
+    who: str | None
     comment: str | None
     created_at_utc: str
     synced: bool
@@ -42,6 +44,8 @@ class Transaction:
             source_id=row["source_id"],
             target_source_id=row["target_source_id"],
             category_id=row["category_id"],
+            subcategory_id=row["subcategory_id"],
+            who=row["who"],
             comment=row["comment"],
             created_at_utc=row["created_at_utc"],
             synced=bool(row["synced"]),
@@ -61,6 +65,8 @@ def insert_transaction(
     target_currency: str | None = None,
     target_source_id: str | None = None,
     category_id: str | None = None,
+    subcategory_id: str | None = None,
+    who: str | None = None,
     comment: str | None = None,
 ) -> Transaction:
     if type == "expense" and category_id is None:
@@ -74,9 +80,9 @@ def insert_transaction(
         """
         INSERT INTO transactions (
             id, user_id, type, amount, currency, target_amount, target_currency,
-            source_id, target_source_id, category_id, comment, created_at_utc,
-            synced, deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+            source_id, target_source_id, category_id, subcategory_id, who, comment,
+            created_at_utc, synced, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
         """,
         (
             transaction_id,
@@ -89,6 +95,8 @@ def insert_transaction(
             source_id,
             target_source_id,
             category_id,
+            subcategory_id,
+            who,
             comment,
             created_at_utc,
         ),
@@ -104,6 +112,8 @@ def insert_transaction(
         source_id=source_id,
         target_source_id=target_source_id,
         category_id=category_id,
+        subcategory_id=subcategory_id,
+        who=who,
         comment=comment,
         created_at_utc=created_at_utc,
         synced=False,
@@ -181,6 +191,8 @@ def sum_expenses_by_category(
 
     Категория не привязана к одной валюте (может пополняться с разных источников),
     поэтому суммы в разных валютах не складываются друг с другом — как и балансы.
+    Считается по верхнеуровневой категории (`category_id`), независимо от выбранной
+    подкатегории — лимит относится к категории целиком.
     """
     row = conn.execute(
         "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions "

@@ -15,6 +15,7 @@ class Category:
     name: str
     limit_amount: float | None
     limit_period: str
+    parent_id: str | None
     is_active: bool
 
     @classmethod
@@ -25,6 +26,7 @@ class Category:
             name=row["name"],
             limit_amount=row["limit_amount"],
             limit_period=row["limit_period"],
+            parent_id=row["parent_id"],
             is_active=bool(row["is_active"]),
         )
 
@@ -35,12 +37,13 @@ def create_category(
     name: str,
     limit_amount: float | None = None,
     limit_period: str = "month",
+    parent_id: str | None = None,
 ) -> Category:
     category_id = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO categories (id, user_id, name, limit_amount, limit_period, is_active) "
-        "VALUES (?, ?, ?, ?, ?, 1)",
-        (category_id, user_id, name, limit_amount, limit_period),
+        "INSERT INTO categories (id, user_id, name, limit_amount, limit_period, parent_id, is_active) "
+        "VALUES (?, ?, ?, ?, ?, ?, 1)",
+        (category_id, user_id, name, limit_amount, limit_period, parent_id),
     )
     return Category(
         id=category_id,
@@ -48,6 +51,7 @@ def create_category(
         name=name,
         limit_amount=limit_amount,
         limit_period=limit_period,
+        parent_id=parent_id,
         is_active=True,
     )
 
@@ -58,10 +62,22 @@ def get_category(conn: sqlite3.Connection, category_id: str) -> Category | None:
 
 
 def list_categories(
-    conn: sqlite3.Connection, user_id: int, active_only: bool = True
+    conn: sqlite3.Connection,
+    user_id: int,
+    active_only: bool = True,
+    parent_id: str | None = _UNSET,
 ) -> list[Category]:
+    """По умолчанию — только категории верхнего уровня (parent_id IS NULL).
+
+    Чтобы получить подкатегории конкретной категории, передать её id в `parent_id`.
+    """
     query = "SELECT * FROM categories WHERE user_id = ?"
     params: list = [user_id]
+    if parent_id is _UNSET or parent_id is None:
+        query += " AND parent_id IS NULL"
+    else:
+        query += " AND parent_id = ?"
+        params.append(parent_id)
     if active_only:
         query += " AND is_active = 1"
     query += " ORDER BY name"

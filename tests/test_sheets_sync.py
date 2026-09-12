@@ -9,11 +9,14 @@ from willem.config import Config
 from willem.db import sources
 from willem.db.connection import connect, init_db
 from willem.db.transactions import insert_transaction
-from willem.sheets_sync import SYNC_ERROR_SUFFIX, resync_owner_unsynced, sync_after_insert
+from willem.sheets_sync import resync_owner_unsynced, sync_after_insert
+from willem.texts import Texts
 
 
 def make_config(db_path: Path) -> Config:
     return Config(
+        profile_name="willem",
+        persona="Виллем",
         bot_token="123:fake",
         owner_telegram_id=1,
         allowed_telegram_ids=(1, 2),
@@ -22,11 +25,20 @@ def make_config(db_path: Path) -> Config:
         google_sheets_spreadsheet_id="",
         timezone="Asia/Almaty",
         log_level="INFO",
+        seed_sources=(),
+        seed_categories=(),
+        seed_all_users=False,
+        categorize_all=False,
+        optional_comment=False,
+        people={},
+        currency_options=(),
+        type_options=(),
+        debt_types=(),
     )
 
 
 async def test_sync_after_insert_skips_non_owner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, texts: Texts
 ) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
@@ -41,14 +53,14 @@ async def test_sync_after_insert_skips_non_owner(
             conn, user_id=2, type="income", amount=1000, currency="KZT", source_id=source.id
         )
 
-    suffix = await sync_after_insert(config, 2, tx, source_name="Kaspi")
+    suffix = await sync_after_insert(config, texts, 2, tx, source_name="Kaspi")
 
     assert suffix == ""
     assert calls == []
 
 
 async def test_sync_after_insert_success_marks_synced(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, texts: Texts
 ) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
@@ -62,7 +74,7 @@ async def test_sync_after_insert_success_marks_synced(
             conn, user_id=1, type="income", amount=1000, currency="KZT", source_id=source.id
         )
 
-    suffix = await sync_after_insert(config, 1, tx, source_name="Kaspi")
+    suffix = await sync_after_insert(config, texts, 1, tx, source_name="Kaspi")
 
     assert suffix == ""
     with connect(str(db_path)) as conn:
@@ -71,7 +83,7 @@ async def test_sync_after_insert_success_marks_synced(
 
 
 async def test_sync_after_insert_failure_returns_suffix_and_stays_unsynced(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, texts: Texts
 ) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
@@ -85,9 +97,9 @@ async def test_sync_after_insert_failure_returns_suffix_and_stays_unsynced(
             conn, user_id=1, type="income", amount=1000, currency="KZT", source_id=source.id
         )
 
-    suffix = await sync_after_insert(config, 1, tx, source_name="Kaspi")
+    suffix = await sync_after_insert(config, texts, 1, tx, source_name="Kaspi")
 
-    assert suffix == SYNC_ERROR_SUFFIX
+    assert suffix == texts.get("common.sync_error_suffix")
     with connect(str(db_path)) as conn:
         row = conn.execute("SELECT synced FROM transactions WHERE id = ?", (tx.id,)).fetchone()
         assert row["synced"] == 0

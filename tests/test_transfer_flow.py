@@ -8,6 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from willem.bot.handlers.transfer import _record_transfer
 from willem.config import Config
+from willem.texts import Texts
 from willem.db import sources
 from willem.db.connection import connect, init_db
 from willem.db.transactions import get_source_balance, insert_transaction
@@ -15,6 +16,8 @@ from willem.db.transactions import get_source_balance, insert_transaction
 
 def make_config(db_path: Path) -> Config:
     return Config(
+        profile_name="willem",
+        persona="Виллем",
         bot_token="123:fake",
         owner_telegram_id=999,
         allowed_telegram_ids=(1,),
@@ -23,6 +26,15 @@ def make_config(db_path: Path) -> Config:
         google_sheets_spreadsheet_id="",
         timezone="Asia/Almaty",
         log_level="INFO",
+        seed_sources=(),
+        seed_categories=(),
+        seed_all_users=False,
+        categorize_all=False,
+        optional_comment=False,
+        people={},
+        currency_options=(),
+        type_options=(),
+        debt_types=(),
     )
 
 
@@ -32,7 +44,7 @@ def make_state() -> FSMContext:
     return FSMContext(storage=storage, key=key)
 
 
-async def test_transfer_same_currency(tmp_path: Path) -> None:
+async def test_transfer_same_currency(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -45,9 +57,11 @@ async def test_transfer_same_currency(tmp_path: Path) -> None:
         )
 
     state = make_state()
-    await state.update_data(amount=5000, source_from_id=cash.id, source_to_id=kaspi.id)
+    await state.update_data(
+        amount=5000, source_from_id=cash.id, source_to_id=kaspi.id, final_target_amount=5000
+    )
 
-    text = await _record_transfer(state, config, 1, target_amount=5000)
+    text = await _record_transfer(state, config, texts, 1, comment=None)
 
     assert text == "Записал перевод: 5 000 ₸ Наличные → Kaspi. 🔄"
     assert await state.get_state() is None
@@ -57,7 +71,7 @@ async def test_transfer_same_currency(tmp_path: Path) -> None:
         assert get_source_balance(conn, kaspi.id) == 5000
 
 
-async def test_transfer_cross_currency(tmp_path: Path) -> None:
+async def test_transfer_cross_currency(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
     config = make_config(db_path)
@@ -70,9 +84,11 @@ async def test_transfer_cross_currency(tmp_path: Path) -> None:
         )
 
     state = make_state()
-    await state.update_data(amount=10000, source_from_id=tbank.id, source_to_id=kaspi.id)
+    await state.update_data(
+        amount=10000, source_from_id=tbank.id, source_to_id=kaspi.id, final_target_amount=25000
+    )
 
-    text = await _record_transfer(state, config, 1, target_amount=25000)
+    text = await _record_transfer(state, config, texts, 1, comment=None)
 
     assert text == "Записал перевод: 10 000 ₽ Т-банк → 25 000 ₸ Kaspi. 🔄"
 

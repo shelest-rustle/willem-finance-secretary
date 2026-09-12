@@ -11,13 +11,19 @@ from willem.timeutil import format_sheet_datetime
 logger = logging.getLogger(__name__)
 
 SHEET_NAME = "Транзакции"
-ID_COLUMN = 11
 
 _TYPE_LABELS = {
     "expense": "Расход",
     "income": "Доход",
     "transfer": "Перевод",
     "adjustment": "Коррекция",
+}
+
+_HOUSEHOLD_TYPE_LABELS = {
+    "expense": "Расход",
+    "income": "Доход",
+    "transfer": "Перевод",
+    "adjustment": "Коррекция остатка",
 }
 
 _client_cache: gspread.Client | None = None
@@ -35,7 +41,19 @@ def _get_worksheet(config: Config) -> gspread.Worksheet:
     return spreadsheet.worksheet(SHEET_NAME)
 
 
-def row_for_transaction(
+def _kzt_equivalent(tx: Transaction) -> tuple[float | None, float | None]:
+    """Курс к KZT и сумма в KZT — только там, где это выводится из уже имеющихся данных:
+    сама операция в KZT, либо перевод, у которого одна из сторон в KZT. Для одиночных
+    операций (expense/income/adjustment) не в KZT и для переводов между двумя не-KZT
+    валютами курс не выводится — колонки остаются пустыми (см. UPGRADE_spec.md, 9.7)."""
+    if tx.currency == "KZT":
+        return 1.0, tx.amount
+    if tx.type == "transfer" and tx.target_currency == "KZT" and tx.amount:
+        return tx.target_amount / tx.amount, tx.target_amount
+    return None, None
+
+
+def _default_row(
     tx: Transaction,
     *,
     source_name: str,
@@ -58,13 +76,85 @@ def row_for_transaction(
     ]
 
 
+def _household_row(
+    tx: Transaction,
+    *,
+    source_name: str,
+    category_name: str | None,
+    subcategory_name: str | None,
+    target_name: str | None,
+    target_kind: str | None,
+    tz_name: str,
+) -> list:
+    if tx.type == "income":
+        debit, credit = "", source_name
+    elif tx.type == "transfer":
+        debit, credit = source_name, target_name or ""
+    else:  # expense, adjustment
+        debit, credit = source_name, ""
+
+    type_label = _HOUSEHOLD_TYPE_LABELS[tx.type]
+    if tx.type == "transfer" and target_kind == "debt":
+        type_label = "Погашение долга/кредита"
+
+    rate, amount_kzt = _kzt_equivalent(tx)
+
+    return [
+        format_sheet_datetime(tx.created_at_utc, tz_name),
+        type_label,
+        tx.who or "",
+        category_name or "",
+        subcategory_name or "",
+        debit,
+        credit,
+        tx.amount,
+        tx.currency,
+        rate if rate is not None else "",
+        amount_kzt if amount_kzt is not None else "",
+        tx.comment or "",
+        tx.id,
+    ]
+
+
+def row_for_transaction(
+    tx: Transaction,
+    *,
+    source_name: str,
+    category_name: str | None = None,
+    subcategory_name: str | None = None,
+    target_name: str | None = None,
+    target_kind: str | None = None,
+    tz_name: str,
+    profile_name: str = "willem",
+) -> list:
+    if profile_name == "pantalone":
+        return _household_row(
+            tx,
+            source_name=source_name,
+            category_name=category_name,
+            subcategory_name=subcategory_name,
+            target_name=target_name,
+            target_kind=target_kind,
+            tz_name=tz_name,
+        )
+    return _default_row(
+        tx,
+        source_name=source_name,
+        category_name=category_name,
+        target_name=target_name,
+        tz_name=tz_name,
+    )
+
+
 def append_transaction(
     config: Config,
     tx: Transaction,
     *,
     source_name: str,
     category_name: str | None = None,
+    subcategory_name: str | None = None,
     target_name: str | None = None,
+    target_kind: str | None = None,
 ) -> bool:
     """Синхронно, с одним ретраем, пытается записать операцию в Sheets.
 
@@ -74,13 +164,17 @@ def append_transaction(
         tx,
         source_name=source_name,
         category_name=category_name,
+        subcategory_name=subcategory_name,
         target_name=target_name,
+        target_kind=target_kind,
         tz_name=config.timezone,
+        profile_name=config.profile_name,
     )
+    id_column = len(row)
     for attempt in (1, 2):
         try:
             worksheet = _get_worksheet(config)
-            existing_ids = set(worksheet.col_values(ID_COLUMN)[1:])
+            existing_ids = set(worksheet.col_values(id_column)[1:])
             if tx.id in existing_ids:
                 return True
             worksheet.append_row(row, value_input_option="USER_ENTERED")

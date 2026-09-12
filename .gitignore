@@ -225,3 +225,7 @@ __marimo__/
 *.db-shm
 credentials.json
 .claude
+
+# per-profile secrets (profiles/*.yaml itself has no secrets and stays tracked)
+.env.*
+!.env.*.example

@@ -16,6 +16,7 @@ from willem.db.sources import Source
 from willem.db.transactions import get_source_balance, insert_transaction
 from willem.formatting import currency_symbol, format_amount, source_type_label
 from willem.sheets_sync import sync_after_insert
+from willem.texts import Texts
 
 router = Router(name="sources")
 
@@ -29,9 +30,6 @@ CURRENCY_SET_PREFIX = "src_currency_set"
 ADJUST_PREFIX = "src_adjust"
 ARCHIVE_PREFIX = "src_archive"
 BACK_CB = "src_back"
-
-TYPE_OPTIONS = [("card", "Карта"), ("cash", "Наличные"), ("crypto", "Крипто")]
-CURRENCY_OPTIONS = [("KZT", "KZT"), ("RUB", "RUB"), ("USD", "USD"), ("USDT", "USDT")]
 
 
 class SourceFlow(StatesGroup):
@@ -54,11 +52,15 @@ def _list_keyboard(items: list[Source]) -> InlineKeyboardMarkup:
     )
 
 
-def _detail_text(source: Source, balance: float) -> str:
+def _detail_text(source: Source, balance: float, texts: Texts) -> str:
     symbol = currency_symbol(source.currency)
-    return (
-        f"«{source.name}». {source_type_label(source.type)} · {source.currency}.\n"
-        f"Баланс: {format_amount(balance)} {symbol}."
+    return texts.get(
+        "sources.detail",
+        name=source.name,
+        type_label=source_type_label(source.type),
+        currency=source.currency,
+        amount=format_amount(balance),
+        symbol=symbol,
     )
 
 
@@ -74,32 +76,34 @@ def _detail_keyboard(source_id: str) -> InlineKeyboardMarkup:
 
 
 @router.message(or_f(Command("sources"), F.text == SOURCES_BUTTON))
-async def show_sources(message: Message, state: FSMContext, config: Config) -> None:
+async def show_sources(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     items = await _list_sources(config, message.from_user.id)
-    await message.answer("Источники. 💳", reply_markup=_list_keyboard(items))
+    await message.answer(texts.get("sources.list_title"), reply_markup=_list_keyboard(items))
 
 
 @router.callback_query(F.data == BACK_CB)
-async def back_to_list(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def back_to_list(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
     await state.clear()
     items = await _list_sources(config, callback.from_user.id)
-    await callback.message.edit_text("Источники. 💳", reply_markup=_list_keyboard(items))
+    await callback.message.edit_text(texts.get("sources.list_title"), reply_markup=_list_keyboard(items))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith(f"{VIEW_PREFIX}:"))
-async def view_source(callback: CallbackQuery, config: Config) -> None:
+async def view_source(callback: CallbackQuery, config: Config, texts: Texts) -> None:
     source_id = callback.data.removeprefix(f"{VIEW_PREFIX}:")
     with connect(config.db_path) as conn:
         source = sources_db.get_source(conn, source_id)
         if source is None:
-            await callback.answer("Источник не найден.")
+            await callback.answer(texts.get("sources.not_found"))
             return
         balance = get_source_balance(conn, source_id)
 
     await callback.message.edit_text(
-        _detail_text(source, balance), reply_markup=_detail_keyboard(source_id)
+        _detail_text(source, balance, texts), reply_markup=_detail_keyboard(source_id)
     )
     await callback.answer()
 
@@ -108,42 +112,47 @@ async def view_source(callback: CallbackQuery, config: Config) -> None:
 
 
 @router.callback_query(F.data == ADD_CB)
-async def start_add(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_add(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
     await state.set_state(SourceFlow.adding_name)
-    await callback.message.edit_text("Название нового источника. 💳")
+    await callback.message.edit_text(texts.get("sources.enter_name"))
     await callback.answer()
 
 
 @router.message(SourceFlow.adding_name, F.text)
-async def add_name(message: Message, state: FSMContext) -> None:
+async def add_name(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.update_data(name=message.text)
     await state.set_state(SourceFlow.adding_type)
-    keyboard = build_choice_keyboard(TYPE_OPTIONS, callback_prefix=ADD_TYPE_PREFIX, columns=3)
-    await message.answer("Тип источника.", reply_markup=keyboard)
+    keyboard = build_choice_keyboard(
+        list(config.type_options), callback_prefix=ADD_TYPE_PREFIX, columns=3
+    )
+    await message.answer(texts.get("sources.choose_type"), reply_markup=keyboard)
 
 
 @router.callback_query(SourceFlow.adding_type, F.data.startswith(f"{ADD_TYPE_PREFIX}:"))
-async def add_type(callback: CallbackQuery, state: FSMContext) -> None:
+async def add_type(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
     type_ = callback.data.removeprefix(f"{ADD_TYPE_PREFIX}:")
     await state.update_data(type=type_)
     await state.set_state(SourceFlow.adding_currency)
     keyboard = build_choice_keyboard(
-        CURRENCY_OPTIONS, callback_prefix=ADD_CURRENCY_PREFIX, columns=4
+        list(config.currency_options), callback_prefix=ADD_CURRENCY_PREFIX, columns=4
     )
-    await callback.message.edit_text("Валюта.", reply_markup=keyboard)
+    await callback.message.edit_text(texts.get("common.choose_currency"), reply_markup=keyboard)
     await callback.answer()
 
 
 @router.callback_query(SourceFlow.adding_currency, F.data.startswith(f"{ADD_CURRENCY_PREFIX}:"))
-async def add_currency(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def add_currency(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
     currency = callback.data.removeprefix(f"{ADD_CURRENCY_PREFIX}:")
     data = await state.get_data()
     await state.clear()
+    kind = "debt" if data["type"] in config.debt_types else "asset"
     with connect(config.db_path) as conn:
         sources_db.create_source(
-            conn, callback.from_user.id, data["name"], data["type"], currency
+            conn, callback.from_user.id, data["name"], data["type"], currency, kind=kind
         )
-    await callback.message.edit_text(f"Добавил источник: «{data['name']}». 💳")
+    await callback.message.edit_text(texts.get("sources.added", name=data["name"]))
     await callback.answer()
 
 
@@ -151,46 +160,50 @@ async def add_currency(callback: CallbackQuery, state: FSMContext, config: Confi
 
 
 @router.callback_query(F.data.startswith(f"{RENAME_PREFIX}:"))
-async def start_rename(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_rename(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
     source_id = callback.data.removeprefix(f"{RENAME_PREFIX}:")
     await state.update_data(source_id=source_id)
     await state.set_state(SourceFlow.renaming)
-    await callback.message.edit_text("Новое название. ✏️")
+    await callback.message.edit_text(texts.get("common.enter_new_name"))
     await callback.answer()
 
 
 @router.message(SourceFlow.renaming, F.text)
-async def finish_rename(message: Message, state: FSMContext, config: Config) -> None:
+async def finish_rename(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
         sources_db.update_source(conn, data["source_id"], name=message.text)
-    await message.answer(f"Переименовал в «{message.text}». ✏️")
+    await message.answer(texts.get("common.renamed", name=message.text))
 
 
 # --- Валюта (редактирование) ---
 
 
 @router.callback_query(F.data.startswith(f"{CURRENCY_EDIT_PREFIX}:"))
-async def start_edit_currency(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_edit_currency(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
     source_id = callback.data.removeprefix(f"{CURRENCY_EDIT_PREFIX}:")
     await state.update_data(source_id=source_id)
     await state.set_state(SourceFlow.editing_currency)
     keyboard = build_choice_keyboard(
-        CURRENCY_OPTIONS, callback_prefix=CURRENCY_SET_PREFIX, columns=4
+        list(config.currency_options), callback_prefix=CURRENCY_SET_PREFIX, columns=4
     )
-    await callback.message.edit_text("Новая валюта.", reply_markup=keyboard)
+    await callback.message.edit_text(texts.get("sources.edit_currency_prompt"), reply_markup=keyboard)
     await callback.answer()
 
 
 @router.callback_query(SourceFlow.editing_currency, F.data.startswith(f"{CURRENCY_SET_PREFIX}:"))
-async def finish_edit_currency(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def finish_edit_currency(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
     currency = callback.data.removeprefix(f"{CURRENCY_SET_PREFIX}:")
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
         sources_db.update_source(conn, data["source_id"], currency=currency)
-    await callback.message.edit_text(f"Валюта обновлена: {currency}. 💱")
+    await callback.message.edit_text(texts.get("sources.currency_updated", currency=currency))
     await callback.answer()
 
 
@@ -198,7 +211,9 @@ async def finish_edit_currency(callback: CallbackQuery, state: FSMContext, confi
 
 
 @router.callback_query(F.data.startswith(f"{ADJUST_PREFIX}:"))
-async def start_adjust(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def start_adjust(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
     source_id = callback.data.removeprefix(f"{ADJUST_PREFIX}:")
     with connect(config.db_path) as conn:
         source = sources_db.get_source(conn, source_id)
@@ -208,14 +223,13 @@ async def start_adjust(callback: CallbackQuery, state: FSMContext, config: Confi
     await state.set_state(SourceFlow.adjusting_balance)
     symbol = currency_symbol(source.currency)
     await callback.message.edit_text(
-        f"Текущий остаток: {format_amount(balance)} {symbol}.\n"
-        f"Введите фактический остаток. ⚖️"
+        texts.get("sources.adjust_prompt", balance=format_amount(balance), symbol=symbol)
     )
     await callback.answer()
 
 
 @router.message(SourceFlow.adjusting_balance, F.text.regexp(EXPENSE_AMOUNT_RE))
-async def finish_adjust(message: Message, state: FSMContext, config: Config) -> None:
+async def finish_adjust(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     new_balance = parse_amount(message.text)
     data = await state.get_data()
     await state.clear()
@@ -233,26 +247,28 @@ async def finish_adjust(message: Message, state: FSMContext, config: Config) -> 
                 amount=delta,
                 currency=source.currency,
                 source_id=data["source_id"],
-                comment="Коррекция остатка",
+                comment=texts.get("sources.adjustment_comment"),
             )
 
     symbol = currency_symbol(source.currency)
     suffix = ""
     if tx is not None:
         suffix = await sync_after_insert(
-            config, message.from_user.id, tx, source_name=source.name
+            config, texts, message.from_user.id, tx, source_name=source.name
         )
-    await message.answer(f"Остаток обновлён: {format_amount(new_balance)} {symbol}.{suffix} ⚖️")
+    await message.answer(
+        texts.get("sources.adjusted", amount=format_amount(new_balance), symbol=symbol, suffix=suffix)
+    )
 
 
 # --- Архивация ---
 
 
 @router.callback_query(F.data.startswith(f"{ARCHIVE_PREFIX}:"))
-async def archive(callback: CallbackQuery, config: Config) -> None:
+async def archive(callback: CallbackQuery, config: Config, texts: Texts) -> None:
     source_id = callback.data.removeprefix(f"{ARCHIVE_PREFIX}:")
     with connect(config.db_path) as conn:
         source = sources_db.get_source(conn, source_id)
         sources_db.archive_source(conn, source_id)
-    await callback.message.edit_text(f"Архивировал «{source.name}». 🗄")
+    await callback.message.edit_text(texts.get("common.archived", name=source.name))
     await callback.answer()
