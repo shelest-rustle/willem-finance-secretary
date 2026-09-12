@@ -35,12 +35,30 @@ class Config:
     seed_sources: tuple[tuple[str, str, str, str, str | None], ...]
     seed_categories: tuple[tuple[str, tuple[str, ...]], ...]
     seed_all_users: bool
-    categorize_all: bool
+    sync_all_users: bool
+    # {"income": "Доходы", "transfer": "Переводы"} — для income/transfer сразу показывать
+    # подкатегории этой категории (без выбора из полного списка); тип без записи — без
+    # категории вовсе, как раньше.
+    auto_category: dict[str, str]
     optional_comment: bool
     people: dict[int, str]
     currency_options: tuple[tuple[str, str], ...]
     type_options: tuple[tuple[str, str], ...]
     debt_types: tuple[str, ...]
+    shared_ledger: bool
+    sheet_name: str
+
+
+def ledger_user_id(config: Config, telegram_id: int) -> int:
+    """Ключ леджера для источников/категорий/транзакций.
+
+    Обычно это и есть реальный Telegram id — у каждого пользователя свой независимый
+    леджер. Но если в профиле включён `shared_ledger` (домохозяйство на несколько
+    Telegram-аккаунтов) — все сводятся к id владельца профиля, то есть все читают и
+    пишут в один и тот же общий леджер. Кто именно совершил операцию — хранится отдельно,
+    в `transactions.who`/`config.people`, и на выбор леджера не влияет.
+    """
+    return config.owner_telegram_id if config.shared_ledger else telegram_id
 
 
 def _parse_additional_ids(raw: str) -> list[int]:
@@ -112,10 +130,13 @@ def load_config() -> Config:
         seed_sources=_parse_seed_sources(profile.get("seed_sources", []), debt_types),
         seed_categories=_parse_seed_categories(profile.get("seed_categories", [])),
         seed_all_users=bool(profile.get("seed_all_users", False)),
-        categorize_all=bool(profile.get("categorize_all", False)),
+        sync_all_users=bool(profile.get("sync_all_users", False)),
+        auto_category=dict(profile.get("auto_category") or {}),
         optional_comment=bool(profile.get("optional_comment", False)),
         people=people,
         currency_options=currency_options,
         type_options=type_options,
         debt_types=debt_types,
+        shared_ledger=bool(profile.get("shared_ledger", False)),
+        sheet_name=profile.get("sheet_name", "Транзакции"),
     )

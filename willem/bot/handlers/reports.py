@@ -15,7 +15,7 @@ from willem.bot.keyboards import (
     WEEK_BUTTON,
     build_choice_keyboard,
 )
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -66,11 +66,17 @@ def _period_report_text(period_transactions: list[Transaction], label: str, text
     return f"{label}: " + "; ".join(parts) + "."
 
 
-def _balance_block(
-    balances: list[tuple[sources_db.Source, float]], texts: Texts, *, header_key: str, total_key: str
-) -> str:
+def _owner_sort_key(owner: str | None, preferred: list[str]) -> tuple[int, str]:
+    if owner is None:
+        return (2, "")
+    if owner in preferred:
+        return (0, str(preferred.index(owner)).zfill(3))
+    return (1, owner)
+
+
+def _balance_lines(balances: list[tuple[sources_db.Source, float]], texts: Texts) -> list[str]:
     ordered = sorted(balances, key=lambda pair: pair[1], reverse=True)
-    lines = [
+    return [
         texts.get(
             "reports.balances_line",
             source=source.name,
@@ -79,6 +85,31 @@ def _balance_block(
         )
         for source, balance in ordered
     ]
+
+
+def _balance_block(
+    balances: list[tuple[sources_db.Source, float]],
+    texts: Texts,
+    *,
+    header_key: str,
+    total_key: str,
+    owner_order: list[str],
+) -> str:
+    owners = {source.owner for source, _ in balances}
+    if owners == {None}:
+        # Ни у одного источника нет владельца (например у `willem`) — плоский список,
+        # без заголовков по человеку.
+        lines = _balance_lines(balances, texts)
+    else:
+        lines = []
+        for owner in sorted(owners, key=lambda o: _owner_sort_key(o, owner_order)):
+            group = [(s, b) for s, b in balances if s.owner == owner]
+            if owner is not None:
+                lines.append(texts.get("reports.balances_owner_header", owner=owner))
+            lines.extend(_balance_lines(group, texts))
+            lines.append("")
+        if lines and lines[-1] == "":
+            lines.pop()
 
     totals: dict[str, float] = {}
     for source, balance in balances:
@@ -97,27 +128,36 @@ def _balance_block(
     )
 
 
-def _balances_text(balances: list[tuple[sources_db.Source, float]], texts: Texts) -> str:
+def _balances_text(
+    balances: list[tuple[sources_db.Source, float]], texts: Texts, config: Config
+) -> str:
     """Активы (`kind != 'debt'`) и долги (`kind == 'debt'`) — отдельными блоками, не смешивая
-    их в общий итог (см. UPGRADE_spec.md, 9.5). Для профилей без долговых источников
-    (например `willem`) второй блок никогда не появляется — данных для него не бывает."""
+    их в общий итог (см. UPGRADE_spec.md, 9.5); внутри каждого блока — по владельцу источника
+    (`config.people`, затем прочие метки владельца, например "Семья"). Для профилей без
+    владельцев у источников (например `willem`) группировка не показывается — плоский список,
+    как и раньше."""
     assets = [(s, b) for s, b in balances if s.kind != "debt"]
     debts = [(s, b) for s, b in balances if s.kind == "debt"]
 
     if not assets and not debts:
         return texts.get("reports.balances_empty")
 
+    owner_order = list(dict.fromkeys(config.people.values()))
     blocks = []
     if assets:
         blocks.append(
             _balance_block(
-                assets, texts, header_key="reports.balances_header", total_key="reports.balances_total_prefix"
+                assets, texts,
+                header_key="reports.balances_header", total_key="reports.balances_total_prefix",
+                owner_order=owner_order,
             )
         )
     if debts:
         blocks.append(
             _balance_block(
-                debts, texts, header_key="reports.debts_header", total_key="reports.debts_total_prefix"
+                debts, texts,
+                header_key="reports.debts_header", total_key="reports.debts_total_prefix",
+                owner_order=owner_order,
             )
         )
     return "\n\n".join(blocks)
@@ -200,7 +240,7 @@ async def show_today(message: Message, state: FSMContext, config: Config, texts:
     start, end = period_bounds("today", config.timezone)
     with connect(config.db_path) as conn:
         period_transactions = transactions_db.sum_by_type_and_period(
-            conn, message.from_user.id, start, end
+            conn, ledger_user_id(config, message.from_user.id), start, end
         )
     await message.answer(_period_report_text(period_transactions, texts.get("reports.label_today"), texts))
 
@@ -211,7 +251,7 @@ async def show_week(message: Message, state: FSMContext, config: Config, texts: 
     start, end = period_bounds("week", config.timezone)
     with connect(config.db_path) as conn:
         period_transactions = transactions_db.sum_by_type_and_period(
-            conn, message.from_user.id, start, end
+            conn, ledger_user_id(config, message.from_user.id), start, end
         )
     await message.answer(_period_report_text(period_transactions, texts.get("reports.label_week"), texts))
 
@@ -220,19 +260,19 @@ async def show_week(message: Message, state: FSMContext, config: Config, texts: 
 async def show_balances(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, message.from_user.id)
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
         balances = [
             (source, transactions_db.get_source_balance(conn, source.id))
             for source in active_sources
         ]
-    await message.answer(_balances_text(balances, texts))
+    await message.answer(_balances_text(balances, texts, config))
 
 
 @router.message(or_f(Command("last"), F.text == LAST_BUTTON))
 async def show_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, message.from_user.id, limit=5)
+        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=5)
         lines = [
             f"{format_local_datetime(tx.created_at_utc, config.timezone)} · {_resolve_summary(conn, tx, texts)}"
             for tx in recent
@@ -248,7 +288,7 @@ async def show_last(message: Message, state: FSMContext, config: Config, texts: 
 async def delete_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, message.from_user.id, limit=1)
+        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=1)
         if not recent:
             await message.answer(texts.get("reports.delete_empty"))
             return
@@ -262,7 +302,7 @@ async def delete_last(message: Message, state: FSMContext, config: Config, texts
 async def edit_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, message.from_user.id, limit=1)
+        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=1)
         if not recent:
             await message.answer(texts.get("reports.edit_empty"))
             return
@@ -305,7 +345,9 @@ async def finish_edit_comment(message: Message, state: FSMContext, config: Confi
 @router.callback_query(F.data == EDIT_CATEGORY_CB)
 async def start_edit_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
     with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(conn, callback.from_user.id)
+        active_categories = categories_db.list_categories(
+            conn, ledger_user_id(config, callback.from_user.id)
+        )
     await state.set_state(EditLastFlow.choosing_category)
     keyboard = build_choice_keyboard(
         [(c.id, c.name) for c in active_categories], callback_prefix=EDIT_CATEGORY_PREFIX

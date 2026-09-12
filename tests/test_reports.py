@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from aiogram.fsm.context import FSMContext
@@ -36,12 +37,15 @@ def make_config(db_path: Path) -> Config:
         seed_sources=(),
         seed_categories=(),
         seed_all_users=False,
-        categorize_all=False,
+        sync_all_users=False,
+        auto_category={},
         optional_comment=False,
         people={},
         currency_options=(),
         type_options=(),
         debt_types=(),
+        shared_ledger=False,
+        sheet_name="Транзакции",
     )
 
 
@@ -118,14 +122,16 @@ def test_period_report_splits_by_currency(texts: Texts) -> None:
 
 
 def test_balances_text_empty(texts: Texts) -> None:
-    assert _balances_text([], texts) == "Нет активных источников."
+    config = make_config(Path("unused"))
+    assert _balances_text([], texts, config) == "Нет активных источников."
 
 
 def test_balances_text_sorted_descending_with_totals(texts: Texts) -> None:
+    config = make_config(Path("unused"))
     kaspi = sources.Source(id="s1", user_id=1, name="Kaspi", type="card", currency="KZT", kind="asset", owner=None, is_active=True)
     bcc = sources.Source(id="s2", user_id=1, name="bcc", type="card", currency="KZT", kind="asset", owner=None, is_active=True)
     tbank = sources.Source(id="s3", user_id=1, name="Т-банк", type="card", currency="RUB", kind="asset", owner=None, is_active=True)
-    text = _balances_text([(kaspi, 71000), (bcc, -39000), (tbank, 500.5)], texts)
+    text = _balances_text([(kaspi, 71000), (bcc, -39000), (tbank, 500.5)], texts, config)
     assert text == (
         "Остатки. ⚖️\n\n"
         "Kaspi: 71 000 ₸\n"
@@ -138,6 +144,7 @@ def test_balances_text_sorted_descending_with_totals(texts: Texts) -> None:
 def test_balances_text_separates_debts_from_assets(texts: Texts) -> None:
     """Долговые источники (kind='debt') не входят в 'Всего' активов — отдельный блок
     со своим подытогом (см. UPGRADE_spec.md, 9.5)."""
+    config = make_config(Path("unused"))
     kaspi = sources.Source(
         id="s1", user_id=1, name="Kaspi", type="card", currency="KZT",
         kind="asset", owner=None, is_active=True,
@@ -146,7 +153,7 @@ def test_balances_text_separates_debts_from_assets(texts: Texts) -> None:
         id="s2", user_id=1, name="Т-Кредит", type="Кредит", currency="KZT",
         kind="debt", owner=None, is_active=True,
     )
-    text = _balances_text([(kaspi, 71000), (debt, -30000)], texts)
+    text = _balances_text([(kaspi, 71000), (debt, -30000)], texts, config)
     assert text == (
         "Остатки. ⚖️\n\n"
         "Kaspi: 71 000 ₸\n\n"
@@ -154,6 +161,49 @@ def test_balances_text_separates_debts_from_assets(texts: Texts) -> None:
         "Долги. ⚖️\n\n"
         "Т-Кредит: -30 000 ₸\n\n"
         "Итого долгов: -30 000 ₸."
+    )
+
+
+def test_balances_text_groups_by_owner_when_present(texts: Texts) -> None:
+    """Профиль "домохозяйство": источники с владельцем группируются по человеку внутри
+    каждого блока (активы/долги), в порядке config.people, остальные метки — после."""
+    config = replace(make_config(Path("unused")), people={1: "Лика", 2: "Ярослав"})
+    lika_card = sources.Source(
+        id="s1", user_id=1, name="Kaspi Лики", type="card", currency="KZT",
+        kind="asset", owner="Лика", is_active=True,
+    )
+    yaroslav_card = sources.Source(
+        id="s2", user_id=1, name="Kaspi Ярослава", type="card", currency="KZT",
+        kind="asset", owner="Ярослав", is_active=True,
+    )
+    shared_cash = sources.Source(
+        id="s3", user_id=1, name="Наличные", type="cash", currency="KZT",
+        kind="asset", owner="Семья", is_active=True,
+    )
+    lika_debt = sources.Source(
+        id="s4", user_id=1, name="Т-Кредит Лики", type="Кредит", currency="RUB",
+        kind="debt", owner="Лика", is_active=True,
+    )
+    text = _balances_text(
+        [(lika_card, 50000), (yaroslav_card, 30000), (shared_cash, 15000), (lika_debt, -100000)],
+        texts,
+        config,
+    )
+    assert text == (
+        "Остатки. ⚖️\n\n"
+        "Лика:\n"
+        "Kaspi Лики: 50 000 ₸\n"
+        "\n"
+        "Ярослав:\n"
+        "Kaspi Ярослава: 30 000 ₸\n"
+        "\n"
+        "Семья:\n"
+        "Наличные: 15 000 ₸\n\n"
+        "Всего: 95 000 ₸.\n\n"
+        "Долги. ⚖️\n\n"
+        "Лика:\n"
+        "Т-Кредит Лики: -100 000 ₽\n\n"
+        "Итого долгов: -100 000 ₽."
     )
 
 

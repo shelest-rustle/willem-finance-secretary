@@ -10,8 +10,6 @@ from willem.timeutil import format_sheet_datetime
 
 logger = logging.getLogger(__name__)
 
-SHEET_NAME = "Транзакции"
-
 _TYPE_LABELS = {
     "expense": "Расход",
     "income": "Доход",
@@ -38,7 +36,7 @@ def _get_client(config: Config) -> gspread.Client:
 
 def _get_worksheet(config: Config) -> gspread.Worksheet:
     spreadsheet = _get_client(config).open_by_key(config.google_sheets_spreadsheet_id)
-    return spreadsheet.worksheet(SHEET_NAME)
+    return spreadsheet.worksheet(config.sheet_name)
 
 
 def _kzt_equivalent(tx: Transaction) -> tuple[float | None, float | None]:
@@ -95,7 +93,7 @@ def _household_row(
 
     type_label = _HOUSEHOLD_TYPE_LABELS[tx.type]
     if tx.type == "transfer" and target_kind == "debt":
-        type_label = "Погашение долга/кредита"
+        type_label = "Погашение долга / кредита"
 
     rate, amount_kzt = _kzt_equivalent(tx)
 

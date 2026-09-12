@@ -28,12 +28,15 @@ def make_config(db_path: Path) -> Config:
         seed_sources=(),
         seed_categories=(),
         seed_all_users=False,
-        categorize_all=False,
+        sync_all_users=False,
+        auto_category={},
         optional_comment=False,
         people={},
         currency_options=(),
         type_options=(),
         debt_types=(),
+        shared_ledger=False,
+        sheet_name="Транзакции",
     )
 
 

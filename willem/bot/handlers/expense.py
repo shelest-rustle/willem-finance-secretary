@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -55,7 +55,7 @@ def _category_keyboard(
 async def start_expense(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     amount = parse_amount(message.text)
     with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, message.from_user.id)
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
 
     if not active_sources:
         await message.answer(texts.get("common.no_active_sources"))
@@ -75,7 +75,9 @@ async def choose_source(
 ) -> None:
     source_id = callback.data.removeprefix(f"{SOURCE_PREFIX}:")
     with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(conn, callback.from_user.id)
+        active_categories = categories_db.list_categories(
+            conn, ledger_user_id(config, callback.from_user.id)
+        )
 
     if not active_categories:
         await callback.message.edit_text(texts.get("common.no_active_categories"))
@@ -96,7 +98,9 @@ async def toggle_who(callback: CallbackQuery, state: FSMContext, config: Config)
     new_who = None if data.get("who") == FAMILY_WHO else FAMILY_WHO
     await state.update_data(who=new_who)
     with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(conn, callback.from_user.id)
+        active_categories = categories_db.list_categories(
+            conn, ledger_user_id(config, callback.from_user.id)
+        )
     keyboard = _category_keyboard(active_categories, config, callback.from_user.id, new_who)
     await callback.message.edit_reply_markup(reply_markup=keyboard)
     await callback.answer()
@@ -110,7 +114,7 @@ async def choose_category(
     await state.update_data(category_id=category_id)
     with connect(config.db_path) as conn:
         subcategories = categories_db.list_categories(
-            conn, callback.from_user.id, parent_id=category_id
+            conn, ledger_user_id(config, callback.from_user.id), parent_id=category_id
         )
     if subcategories:
         await state.set_state(ExpenseFlow.choosing_subcategory)
@@ -175,6 +179,7 @@ async def _record_expense(
     category_id = data["category_id"]
     subcategory_id = data.get("subcategory_id")
     who = data.get("who") or config.people.get(user_id)
+    ledger_id = ledger_user_id(config, user_id)
     await state.clear()
 
     with connect(config.db_path) as conn:
@@ -183,7 +188,7 @@ async def _record_expense(
         subcategory = categories_db.get_category(conn, subcategory_id) if subcategory_id else None
         tx = transactions_db.insert_transaction(
             conn,
-            user_id=user_id,
+            user_id=ledger_id,
             type="expense",
             amount=amount,
             currency=source.currency,

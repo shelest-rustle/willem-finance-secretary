@@ -14,7 +14,7 @@ from willem.bot.keyboards import (
     build_manage_list_keyboard,
     build_single_button_keyboard,
 )
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db.categories import Category
 from willem.db.connection import connect
@@ -48,7 +48,7 @@ class CategoryFlow(StatesGroup):
 
 async def _list_categories(config: Config, user_id: int) -> list[Category]:
     with connect(config.db_path) as conn:
-        return categories_db.list_categories(conn, user_id)
+        return categories_db.list_categories(conn, ledger_user_id(config, user_id))
 
 
 def _list_keyboard(items: list[Category]) -> InlineKeyboardMarkup:
@@ -144,7 +144,7 @@ async def add_no_limit(
     data = await state.get_data()
     await state.clear()
     with connect(config.db_path) as conn:
-        categories_db.create_category(conn, callback.from_user.id, data["name"])
+        categories_db.create_category(conn, ledger_user_id(config, callback.from_user.id), data["name"])
     await callback.message.edit_text(texts.get("categories.added", name=data["name"]))
     await callback.answer()
 
@@ -159,7 +159,7 @@ async def add_limit_period(
     with connect(config.db_path) as conn:
         categories_db.create_category(
             conn,
-            callback.from_user.id,
+            ledger_user_id(config, callback.from_user.id),
             data["name"],
             limit_amount=data["limit_amount"],
             limit_period=period,

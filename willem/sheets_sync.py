@@ -27,9 +27,11 @@ async def sync_after_insert(
     """Пытается синхронизировать только что записанную операцию в Sheets.
 
     Возвращает суффикс для ответа пользователю: пустую строку при успехе (или если
-    синк вообще не нужен — не-владельцу) либо текст об ошибке и ночной очереди.
+    синк вообще не нужен — по умолчанию только владельцу, если в профиле не включён
+    `sync_all_users`) либо текст об ошибке и ночной очереди.
     """
-    if user_id != config.owner_telegram_id:
+    synced_user_ids = config.allowed_telegram_ids if config.sync_all_users else (config.owner_telegram_id,)
+    if user_id not in synced_user_ids:
         return ""
 
     success = await asyncio.to_thread(
@@ -51,10 +53,14 @@ async def sync_after_insert(
 
 
 def resync_owner_unsynced(config: Config) -> int:
-    """Синхронно досинкивает все неотправленные операции владельца. Возвращает число успешных."""
+    """Синхронно досинкивает все неотправленные операции — владельца, либо всех разрешённых
+    пользователей, если в профиле включён `sync_all_users`. Возвращает число успешных."""
+    synced_user_ids = config.allowed_telegram_ids if config.sync_all_users else (config.owner_telegram_id,)
     synced_count = 0
     with connect(config.db_path) as conn:
-        pending = transactions_db.list_unsynced(conn, config.owner_telegram_id)
+        pending = [
+            tx for user_id in synced_user_ids for tx in transactions_db.list_unsynced(conn, user_id)
+        ]
         for tx in pending:
             source = sources_db.get_source(conn, tx.source_id)
             category = categories_db.get_category(conn, tx.category_id) if tx.category_id else None

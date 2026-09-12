@@ -1,10 +1,23 @@
 name: pantalone
 persona: "Регистратор"
 
+# Название листа в Google-таблице — у этого профиля своё, не "Транзакции" (по умолчанию).
+sheet_name: "Учёт"
+
 # Профильная логика домохозяйства (см. UPGRADE_spec.md, часть 2):
-categorize_all: true      # категория/подкатегория есть и у income, и у transfer, не только у expense
+# Для income/transfer сразу показываем подкатегории указанной категории (без выбора из
+# полного списка) — у expense по-прежнему полный список категорий, без авто-подстановки.
+auto_category:
+  income: "Доходы"
+  transfer: "Переводы"
 optional_comment: true    # комментарий можно пропустить кнопкой (для expense/income/transfer)
-seed_all_users: true      # сид заводится и владельцу, и доп. пользователю — все источники всем
+sync_all_users: true      # в общую таблицу пишут все разрешённые пользователи, не только владелец
+
+# Полный шер: у ВСЕХ участников профиля — один и тот же леджер (источники, категории,
+# транзакции, /today, /week, /last, /edit_last, /delete_last — всё общее на двоих).
+# Технически все сводятся к id владельца профиля (см. willem/config.py::ledger_user_id).
+# Поле "Кто" по-прежнему определяется по реальному отправителю через people:.
+shared_ledger: true
 
 people:
   431744401: "Лика"
@@ -128,7 +141,7 @@ messages:
   expense.done_suffix: ""
 
   income.enter_comment: "Обоснуйте поступление комментарием."
-  income.recorded: "Приход подтверждён: +{amount} {symbol} — счёт «{source}»"
+  income.recorded: "Доход подтверждён: +{amount} {symbol} — счёт «{source}»"
   income.done_suffix: ""
 
   transfer.enter_amount: "Укажите сумму перемещения."
@@ -172,7 +185,7 @@ messages:
   reports.debts_header: "Долговые обязательства."
   reports.debts_total_prefix: "Итого к возмещению: "
   reports.summary_expense: "Расход: {amount} {symbol} — {category} ({source})"
-  reports.summary_income: "Приход: {amount} {symbol} — {source}"
+  reports.summary_income: "Доход: {amount} {symbol} — {source}"
   reports.summary_transfer_same: "Перемещение: {amount} {symbol} {source} → {target}"
   reports.summary_transfer_diff: "Перемещение: {amount} {symbol} {source} → {target_amount} {target_symbol} {target}"
   reports.summary_adjustment: "Коррекция: {sign}{amount} {symbol} — {source}"

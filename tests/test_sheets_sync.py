@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,15 @@ def make_config(db_path: Path) -> Config:
         seed_sources=(),
         seed_categories=(),
         seed_all_users=False,
-        categorize_all=False,
+        sync_all_users=False,
+        auto_category={},
         optional_comment=False,
         people={},
         currency_options=(),
         type_options=(),
         debt_types=(),
+        shared_ledger=False,
+        sheet_name="Транзакции",
     )
 
 
@@ -57,6 +61,32 @@ async def test_sync_after_insert_skips_non_owner(
 
     assert suffix == ""
     assert calls == []
+
+
+async def test_sync_after_insert_syncs_non_owner_when_sync_all_users(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, texts: Texts
+) -> None:
+    """Профиль с sync_all_users=True (домохозяйство) — синкает не только владельца."""
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+    config = replace(make_config(db_path), sync_all_users=True)
+
+    calls = []
+    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: calls.append(1) or True)
+
+    with connect(str(db_path)) as conn:
+        source = sources.create_source(conn, 2, "Kaspi", "card", "KZT")
+        tx = insert_transaction(
+            conn, user_id=2, type="income", amount=1000, currency="KZT", source_id=source.id
+        )
+
+    suffix = await sync_after_insert(config, texts, 2, tx, source_name="Kaspi")
+
+    assert suffix == ""
+    assert calls == [1]
+    with connect(str(db_path)) as conn:
+        row = conn.execute("SELECT synced FROM transactions WHERE id = ?", (tx.id,)).fetchone()
+        assert row["synced"] == 1
 
 
 async def test_sync_after_insert_success_marks_synced(
@@ -136,6 +166,33 @@ def test_resync_owner_unsynced_ignores_other_users(
             "SELECT synced FROM transactions WHERE user_id = 2"
         ).fetchone()
         assert friend_row["synced"] == 0
+
+
+def test_resync_owner_unsynced_syncs_everyone_when_sync_all_users(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+    config = replace(make_config(db_path), sync_all_users=True)
+
+    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: True)
+
+    with connect(str(db_path)) as conn:
+        owner_source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
+        second_source = sources.create_source(conn, 2, "Наличные", "cash", "KZT")
+        insert_transaction(
+            conn, user_id=1, type="income", amount=1000, currency="KZT", source_id=owner_source.id
+        )
+        insert_transaction(
+            conn, user_id=2, type="income", amount=500, currency="KZT", source_id=second_source.id
+        )
+
+    synced_count = resync_owner_unsynced(config)
+
+    assert synced_count == 2
+    with connect(str(db_path)) as conn:
+        rows = conn.execute("SELECT synced FROM transactions").fetchall()
+        assert all(row["synced"] == 1 for row in rows)
 
 
 def test_resync_owner_unsynced_leaves_failures_unsynced(

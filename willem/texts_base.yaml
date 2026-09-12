@@ -73,6 +73,7 @@ reports:
   balances_header: "Остатки. ⚖️"
   balances_empty: "Нет активных источников."
   balances_line: "{source}: {amount} {symbol}"
+  balances_owner_header: "{owner}:"
   balances_total_prefix: "Всего: "
   debts_header: "Долги. ⚖️"
   debts_total_prefix: "Итого долгов: "

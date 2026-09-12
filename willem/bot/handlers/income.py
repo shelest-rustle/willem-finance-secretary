@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import INCOME_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -21,7 +21,6 @@ from willem.texts import Texts
 router = Router(name="income")
 
 SOURCE_PREFIX = "inc_src"
-CATEGORY_PREFIX = "inc_cat"
 SUBCATEGORY_PREFIX = "inc_subcat"
 SKIP_SUBCATEGORY_CB = "inc_subcat_skip"
 SKIP_COMMENT_CB = "inc_comment_skip"
@@ -32,29 +31,34 @@ FAMILY_WHO = "Семья"
 
 class IncomeFlow(StatesGroup):
     choosing_source = State()
-    choosing_category = State()
     choosing_subcategory = State()
     entering_comment = State()
 
 
-def _category_keyboard(
-    categories: list[Category], config: Config, user_id: int, current_who: str | None
+def _subcategory_keyboard(
+    subcategories: list[Category], config: Config, user_id: int, current_who: str | None
 ) -> InlineKeyboardMarkup:
-    extra = []
+    extra = [(SKIP_LABEL, SKIP_SUBCATEGORY_CB)]
     auto_name = config.people.get(user_id)
     if auto_name:
         label = FAMILY_WHO if current_who == FAMILY_WHO else auto_name
-        extra = [(label, WHO_TOGGLE_CB)]
+        extra.append((label, WHO_TOGGLE_CB))
     return build_choice_keyboard(
-        [(c.id, c.name) for c in categories], callback_prefix=CATEGORY_PREFIX, extra_buttons=extra
+        [(c.id, c.name) for c in subcategories],
+        callback_prefix=SUBCATEGORY_PREFIX,
+        extra_buttons=extra,
     )
+
+
+def _find_auto_category(categories: list[Category], name: str) -> Category | None:
+    return next((c for c in categories if c.name == name), None)
 
 
 @router.message(StateFilter(None), F.text.regexp(INCOME_AMOUNT_RE))
 async def start_income(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     amount = parse_amount(message.text)
     with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, message.from_user.id)
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
 
     if not active_sources:
         await message.answer(texts.get("common.no_active_sources"))
@@ -75,58 +79,52 @@ async def choose_source(
     source_id = callback.data.removeprefix(f"{SOURCE_PREFIX}:")
     await state.update_data(source_id=source_id)
 
-    if not config.categorize_all:
+    auto_category_name = config.auto_category.get("income")
+    if not auto_category_name:
         await _prompt_comment(callback.message, state, config, texts)
         await callback.answer()
         return
 
     with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(conn, callback.from_user.id)
+        top_level = categories_db.list_categories(
+            conn, ledger_user_id(config, callback.from_user.id)
+        )
+        category = _find_auto_category(top_level, auto_category_name)
+        subcategories = (
+            categories_db.list_categories(
+                conn, ledger_user_id(config, callback.from_user.id), parent_id=category.id
+            )
+            if category
+            else []
+        )
 
-    if not active_categories:
-        await callback.message.edit_text(texts.get("common.no_active_categories"))
-        await state.clear()
+    if category is None or not subcategories:
+        # Категория для авто-подстановки не найдена (или у неё нет подкатегорий) —
+        # просто фиксируем саму категорию (если нашлась) и идём дальше, к комментарию.
+        if category is not None:
+            await state.update_data(category_id=category.id)
+        await _prompt_comment(callback.message, state, config, texts)
         await callback.answer()
         return
 
-    await state.set_state(IncomeFlow.choosing_category)
-    keyboard = _category_keyboard(active_categories, config, callback.from_user.id, None)
-    await callback.message.edit_text(texts.get("common.choose_category"), reply_markup=keyboard)
+    await state.update_data(category_id=category.id)
+    await state.set_state(IncomeFlow.choosing_subcategory)
+    keyboard = _subcategory_keyboard(subcategories, config, callback.from_user.id, None)
+    await callback.message.edit_text(texts.get("common.choose_subcategory"), reply_markup=keyboard)
     await callback.answer()
 
 
-@router.callback_query(IncomeFlow.choosing_category, F.data == WHO_TOGGLE_CB)
+@router.callback_query(IncomeFlow.choosing_subcategory, F.data == WHO_TOGGLE_CB)
 async def toggle_who(callback: CallbackQuery, state: FSMContext, config: Config) -> None:
     data = await state.get_data()
     new_who = None if data.get("who") == FAMILY_WHO else FAMILY_WHO
     await state.update_data(who=new_who)
     with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(conn, callback.from_user.id)
-    keyboard = _category_keyboard(active_categories, config, callback.from_user.id, new_who)
-    await callback.message.edit_reply_markup(reply_markup=keyboard)
-    await callback.answer()
-
-
-@router.callback_query(IncomeFlow.choosing_category, F.data.startswith(f"{CATEGORY_PREFIX}:"))
-async def choose_category(
-    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
-) -> None:
-    category_id = callback.data.removeprefix(f"{CATEGORY_PREFIX}:")
-    await state.update_data(category_id=category_id)
-    with connect(config.db_path) as conn:
         subcategories = categories_db.list_categories(
-            conn, callback.from_user.id, parent_id=category_id
+            conn, ledger_user_id(config, callback.from_user.id), parent_id=data["category_id"]
         )
-    if subcategories:
-        await state.set_state(IncomeFlow.choosing_subcategory)
-        keyboard = build_choice_keyboard(
-            [(c.id, c.name) for c in subcategories],
-            callback_prefix=SUBCATEGORY_PREFIX,
-            extra_buttons=[(SKIP_LABEL, SKIP_SUBCATEGORY_CB)],
-        )
-        await callback.message.edit_text(texts.get("common.choose_subcategory"), reply_markup=keyboard)
-    else:
-        await _prompt_comment(callback.message, state, config, texts)
+    keyboard = _subcategory_keyboard(subcategories, config, callback.from_user.id, new_who)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
     await callback.answer()
 
 
@@ -178,6 +176,7 @@ async def _record_income(
     category_id = data.get("category_id")
     subcategory_id = data.get("subcategory_id")
     who = data.get("who") or config.people.get(user_id)
+    ledger_id = ledger_user_id(config, user_id)
     await state.clear()
 
     with connect(config.db_path) as conn:
@@ -186,7 +185,7 @@ async def _record_income(
         subcategory = categories_db.get_category(conn, subcategory_id) if subcategory_id else None
         tx = transactions_db.insert_transaction(
             conn,
-            user_id=user_id,
+            user_id=ledger_id,
             type="income",
             amount=amount,
             currency=source.currency,

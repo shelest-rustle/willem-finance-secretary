@@ -15,7 +15,7 @@ from willem.bot.keyboards import (
     build_choice_keyboard,
     build_single_button_keyboard,
 )
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -28,7 +28,6 @@ router = Router(name="transfer")
 
 FROM_PREFIX = "trf_from"
 TO_PREFIX = "trf_to"
-CATEGORY_PREFIX = "trf_cat"
 SUBCATEGORY_PREFIX = "trf_subcat"
 SKIP_SUBCATEGORY_CB = "trf_subcat_skip"
 SKIP_COMMENT_CB = "trf_comment_skip"
@@ -41,7 +40,6 @@ class TransferFlow(StatesGroup):
     choosing_source_from = State()
     choosing_source_to = State()
     entering_target_amount = State()
-    choosing_category = State()
     choosing_subcategory = State()
     entering_comment = State()
 
@@ -56,7 +54,7 @@ async def start_transfer(message: Message, state: FSMContext, texts: Texts) -> N
 async def enter_amount(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     amount = parse_amount(message.text)
     with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, message.from_user.id)
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
 
     if len(active_sources) < 2:
         await message.answer(texts.get("transfer.not_enough_sources"))
@@ -77,7 +75,9 @@ async def choose_source_from(
 ) -> None:
     source_from_id = callback.data.removeprefix(f"{FROM_PREFIX}:")
     with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, callback.from_user.id)
+        active_sources = sources_db.list_sources(
+            conn, ledger_user_id(config, callback.from_user.id)
+        )
 
     targets = [s for s in active_sources if s.id != source_from_id]
     if not targets:
@@ -111,7 +111,7 @@ async def choose_source_to(
 
     if source_from.currency == source_to.currency:
         await state.update_data(final_target_amount=data["amount"])
-        await _after_amounts_resolved(respond, state, config, texts, callback.from_user.id)
+        await _maybe_show_subcategory(respond, state, config, texts, callback.from_user.id)
         await callback.answer()
         return
 
@@ -132,52 +132,38 @@ async def enter_target_amount(
     async def respond(text: str, keyboard: InlineKeyboardMarkup | None) -> None:
         await message.answer(text, reply_markup=keyboard)
 
-    await _after_amounts_resolved(respond, state, config, texts, message.from_user.id)
+    await _maybe_show_subcategory(respond, state, config, texts, message.from_user.id)
 
 
-async def _after_amounts_resolved(
+async def _maybe_show_subcategory(
     respond: Respond, state: FSMContext, config: Config, texts: Texts, user_id: int
 ) -> None:
-    """После того как обе суммы перевода известны — категория (если включено в профиле)
-    либо сразу комментарий."""
-    if config.categorize_all:
+    """Если в профиле задан auto_category для transfer (например "Переводы") — сразу
+    подкатегории этой категории, без выбора из полного списка категорий."""
+    auto_category_name = config.auto_category.get("transfer")
+    if auto_category_name:
         with connect(config.db_path) as conn:
-            active_categories = categories_db.list_categories(conn, user_id)
-        if active_categories:
-            await state.set_state(TransferFlow.choosing_category)
-            keyboard = build_choice_keyboard(
-                [(c.id, c.name) for c in active_categories], callback_prefix=CATEGORY_PREFIX
+            top_level = categories_db.list_categories(conn, ledger_user_id(config, user_id))
+            category = next((c for c in top_level if c.name == auto_category_name), None)
+            subcategories = (
+                categories_db.list_categories(
+                    conn, ledger_user_id(config, user_id), parent_id=category.id
+                )
+                if category
+                else []
             )
-            await respond(texts.get("common.choose_category"), keyboard)
+        if category is not None:
+            await state.update_data(category_id=category.id)
+        if subcategories:
+            await state.set_state(TransferFlow.choosing_subcategory)
+            keyboard = build_choice_keyboard(
+                [(c.id, c.name) for c in subcategories],
+                callback_prefix=SUBCATEGORY_PREFIX,
+                extra_buttons=[(SKIP_LABEL, SKIP_SUBCATEGORY_CB)],
+            )
+            await respond(texts.get("common.choose_subcategory"), keyboard)
             return
     await _prompt_comment(respond, state, texts)
-
-
-@router.callback_query(TransferFlow.choosing_category, F.data.startswith(f"{CATEGORY_PREFIX}:"))
-async def choose_category(
-    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
-) -> None:
-    category_id = callback.data.removeprefix(f"{CATEGORY_PREFIX}:")
-    await state.update_data(category_id=category_id)
-
-    async def respond(text: str, keyboard: InlineKeyboardMarkup | None) -> None:
-        await callback.message.edit_text(text, reply_markup=keyboard)
-
-    with connect(config.db_path) as conn:
-        subcategories = categories_db.list_categories(
-            conn, callback.from_user.id, parent_id=category_id
-        )
-    if subcategories:
-        await state.set_state(TransferFlow.choosing_subcategory)
-        keyboard = build_choice_keyboard(
-            [(c.id, c.name) for c in subcategories],
-            callback_prefix=SUBCATEGORY_PREFIX,
-            extra_buttons=[(SKIP_LABEL, SKIP_SUBCATEGORY_CB)],
-        )
-        await respond(texts.get("common.choose_subcategory"), keyboard)
-    else:
-        await _prompt_comment(respond, state, texts)
-    await callback.answer()
 
 
 @router.callback_query(TransferFlow.choosing_subcategory, F.data.startswith(f"{SUBCATEGORY_PREFIX}:"))
@@ -230,6 +216,8 @@ async def _record_transfer(
     target_amount = data["final_target_amount"]
     category_id = data.get("category_id")
     subcategory_id = data.get("subcategory_id")
+    ledger_id = ledger_user_id(config, user_id)
+    who = config.people.get(user_id)
     await state.clear()
 
     with connect(config.db_path) as conn:
@@ -239,7 +227,7 @@ async def _record_transfer(
         subcategory = categories_db.get_category(conn, subcategory_id) if subcategory_id else None
         tx = transactions_db.insert_transaction(
             conn,
-            user_id=user_id,
+            user_id=ledger_id,
             type="transfer",
             amount=amount,
             currency=source_from.currency,
@@ -249,6 +237,7 @@ async def _record_transfer(
             target_source_id=source_to_id,
             category_id=category_id,
             subcategory_id=subcategory_id,
+            who=who,
             comment=comment,
         )
 

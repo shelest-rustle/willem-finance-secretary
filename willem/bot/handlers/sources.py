@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SOURCES_BUTTON, build_choice_keyboard, build_manage_list_keyboard
-from willem.config import Config
+from willem.config import Config, ledger_user_id
 from willem.db import sources as sources_db
 from willem.db.connection import connect
 from willem.db.sources import Source
@@ -43,7 +43,7 @@ class SourceFlow(StatesGroup):
 
 async def _list_sources(config: Config, user_id: int) -> list[Source]:
     with connect(config.db_path) as conn:
-        return sources_db.list_sources(conn, user_id)
+        return sources_db.list_sources(conn, ledger_user_id(config, user_id))
 
 
 def _list_keyboard(items: list[Source]) -> InlineKeyboardMarkup:
@@ -150,7 +150,12 @@ async def add_currency(
     kind = "debt" if data["type"] in config.debt_types else "asset"
     with connect(config.db_path) as conn:
         sources_db.create_source(
-            conn, callback.from_user.id, data["name"], data["type"], currency, kind=kind
+            conn,
+            ledger_user_id(config, callback.from_user.id),
+            data["name"],
+            data["type"],
+            currency,
+            kind=kind,
         )
     await callback.message.edit_text(texts.get("sources.added", name=data["name"]))
     await callback.answer()
@@ -242,7 +247,7 @@ async def finish_adjust(message: Message, state: FSMContext, config: Config, tex
         if delta != 0:
             tx = insert_transaction(
                 conn,
-                user_id=message.from_user.id,
+                user_id=ledger_user_id(config, message.from_user.id),
                 type="adjustment",
                 amount=delta,
                 currency=source.currency,

@@ -123,7 +123,7 @@ def test_row_for_transaction_household_debt_payment_label() -> None:
         tz_name="Asia/Almaty",
         profile_name="pantalone",
     )
-    assert row[1] == "Погашение долга/кредита"
+    assert row[1] == "Погашение долга / кредита"
     assert row[5] == "Kaspi Лики KZT"
     assert row[6] == "Т-Кредит Лики"
 
@@ -151,6 +151,8 @@ def test_row_for_transaction_household_kzt_equivalent_blank_between_two_foreign_
 class FakeConfig:
     timezone = "Asia/Almaty"
     profile_name = "willem"
+    sheet_name = "Транзакции"
+    google_sheets_spreadsheet_id = "fake-id"
 
 
 class FakeWorksheet:
@@ -167,6 +169,30 @@ class FakeWorksheet:
             self.fail_times -= 1
             raise RuntimeError("API недоступен")
         self.appended.append(row)
+
+
+def test_get_worksheet_uses_profile_sheet_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Регрессия: имя листа должно браться из config.sheet_name, а не из захардкоженной
+    константы — у pantalone лист называется иначе, чем "Транзакции" у willem."""
+    requested_names = []
+
+    class FakeSpreadsheet:
+        def worksheet(self, name: str):
+            requested_names.append(name)
+            return "ok"
+
+    class FakeClient:
+        def open_by_key(self, key: str) -> FakeSpreadsheet:
+            return FakeSpreadsheet()
+
+    monkeypatch.setattr(sheets, "_get_client", lambda config: FakeClient())
+
+    class ProfileConfig(FakeConfig):
+        sheet_name = "Учёт"
+
+    sheets._get_worksheet(ProfileConfig())
+
+    assert requested_names == ["Учёт"]
 
 
 def test_append_transaction_skips_duplicate(monkeypatch: pytest.MonkeyPatch) -> None:
