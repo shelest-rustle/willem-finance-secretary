@@ -84,7 +84,6 @@ seed_sources:
   - { name: "Т-Кредит Лики", type: "Кредит", currency: "RUB", owner: "Лика" }
   - { name: "М-Кредит Лики", type: "Кредит", currency: "RUB", owner: "Лика" }
   - { name: "М-Кредит Ярослава", type: "Кредит", currency: "RUB", owner: "Ярослав" }
-  - { name: "Tinkoff REF Кредит Лики", type: "Кредит", currency: "RUB", owner: "Лика" }
   - { name: "Т-Кубышка Лики", type: "Кредитный лимит", currency: "RUB", owner: "Лика" }
   - { name: "Т-Кубышка Ярослава", type: "Кредитный лимит", currency: "RUB", owner: "Ярослав" }
   - { name: "Долг Роме", type: "Долг человеку", currency: "RUB", owner: "Семья" }

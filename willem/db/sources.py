@@ -108,6 +108,24 @@ def archive_source(conn: sqlite3.Connection, source_id: str) -> None:
     conn.execute("UPDATE sources SET is_active = 0 WHERE id = ?", (source_id,))
 
 
+def count_transactions_for_source(conn: sqlite3.Connection, source_id: str) -> int:
+    """Сколько операций (включая удалённые) ссылаются на источник — как списание, так
+    и зачисление. Используется перед жёстким удалением источника (в отличие от
+    `archive_source`), чтобы не оставить операции со ссылкой на несуществующий id."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM transactions WHERE source_id = ? OR target_source_id = ?",
+        (source_id, source_id),
+    ).fetchone()
+    return row["n"]
+
+
+def delete_source(conn: sqlite3.Connection, source_id: str) -> None:
+    """Жёсткое удаление — только для источников, ошибочно созданных и ещё не
+    использованных ни в одной операции (см. `count_transactions_for_source`). Для
+    выводимых из оборота, но уже использованных источников — `archive_source`."""
+    conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+
+
 def matches_keywords(name: str, keywords: Sequence[str]) -> bool:
     """Содержит ли название источника хотя бы одно из ключевых слов (без учёта
     регистра) — используется для профильной классификации долговых источников
