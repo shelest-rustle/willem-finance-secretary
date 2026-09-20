@@ -24,6 +24,10 @@ expense:
   recorded: "Записал: {amount} {symbol} — {category}"
   limit_warning: ". По категории за {period}: {total} из {limit} {symbol}"
   done_suffix: " 💸"
+  choose_credit_payment_type: "Тип платежа? 💳"
+  choose_credit_overpayment_action: "Если сумма больше плана — что делать? 📉"
+  credit_capacity_suffix: " В графике кредита не осталось свободных строк — обновите таблицу вручную."
+  credit_sync_error_suffix: " Не удалось обновить кредитный лист — сделайте это вручную."
 
 income:
   enter_comment: "Оставьте комментарий к доходу. 💬"

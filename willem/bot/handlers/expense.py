@@ -9,6 +9,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
 from willem.config import Config, ledger_user_id
+from willem.credit_sheets import (
+    OVERPAYMENT_REDUCE,
+    OVERPAYMENT_SHORTEN,
+    CreditSyncOutcome,
+    sync_credit_payment,
+)
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -17,7 +23,7 @@ from willem.db.connection import connect
 from willem.formatting import currency_symbol, format_amount, period_word
 from willem.sheets_sync import sync_after_insert
 from willem.texts import Texts
-from willem.timeutil import period_bounds
+from willem.timeutil import format_sheet_date, period_bounds
 
 router = Router(name="expense")
 
@@ -27,14 +33,29 @@ SUBCATEGORY_PREFIX = "exp_subcat"
 SKIP_SUBCATEGORY_CB = "exp_subcat_skip"
 SKIP_COMMENT_CB = "exp_comment_skip"
 WHO_TOGGLE_CB = "exp_who_toggle"
+CREDIT_TYPE_PREFIX = "exp_credit_type"
+CREDIT_ACTION_PREFIX = "exp_credit_action"
 
 FAMILY_WHO = "Семья"
+
+CREDIT_TYPE_REGULAR = "regular"
+CREDIT_TYPE_EARLY = "early"
+CREDIT_PAYMENT_TYPE_LABELS = ((CREDIT_TYPE_REGULAR, "Обычный платёж"), (CREDIT_TYPE_EARLY, "Досрочный взнос"))
+
+CREDIT_ACTION_SHORTEN = "shorten"
+CREDIT_ACTION_REDUCE = "reduce"
+CREDIT_OVERPAYMENT_ACTION_LABELS = (
+    (CREDIT_ACTION_SHORTEN, OVERPAYMENT_SHORTEN),
+    (CREDIT_ACTION_REDUCE, OVERPAYMENT_REDUCE),
+)
 
 
 class ExpenseFlow(StatesGroup):
     choosing_source = State()
     choosing_category = State()
     choosing_subcategory = State()
+    choosing_credit_payment_type = State()
+    choosing_credit_overpayment_action = State()
     entering_comment = State()
 
 
@@ -48,6 +69,18 @@ def _category_keyboard(
         extra = [(label, WHO_TOGGLE_CB)]
     return build_choice_keyboard(
         [(c.id, c.name) for c in categories], callback_prefix=CATEGORY_PREFIX, extra_buttons=extra
+    )
+
+
+def _credit_payment_type_keyboard() -> InlineKeyboardMarkup:
+    return build_choice_keyboard(
+        list(CREDIT_PAYMENT_TYPE_LABELS), callback_prefix=CREDIT_TYPE_PREFIX, columns=1
+    )
+
+
+def _credit_overpayment_action_keyboard() -> InlineKeyboardMarkup:
+    return build_choice_keyboard(
+        list(CREDIT_OVERPAYMENT_ACTION_LABELS), callback_prefix=CREDIT_ACTION_PREFIX, columns=1
     )
 
 
@@ -135,7 +168,20 @@ async def choose_subcategory(
 ) -> None:
     subcategory_id = callback.data.removeprefix(f"{SUBCATEGORY_PREFIX}:")
     await state.update_data(subcategory_id=subcategory_id)
-    await _prompt_comment(callback.message, state, config, texts)
+
+    with connect(config.db_path) as conn:
+        subcategory = categories_db.get_category(conn, subcategory_id)
+    credit_sheet_title = config.credit_sheets.get(subcategory.name) if subcategory else None
+
+    if credit_sheet_title:
+        await state.update_data(credit_sheet_title=credit_sheet_title)
+        await state.set_state(ExpenseFlow.choosing_credit_payment_type)
+        await callback.message.edit_text(
+            texts.get("expense.choose_credit_payment_type"),
+            reply_markup=_credit_payment_type_keyboard(),
+        )
+    else:
+        await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
 
 
@@ -143,6 +189,34 @@ async def choose_subcategory(
 async def skip_subcategory(
     callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
 ) -> None:
+    await _prompt_comment(callback.message, state, config, texts)
+    await callback.answer()
+
+
+@router.callback_query(
+    ExpenseFlow.choosing_credit_payment_type, F.data.startswith(f"{CREDIT_TYPE_PREFIX}:")
+)
+async def choose_credit_payment_type(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    payment_type = callback.data.removeprefix(f"{CREDIT_TYPE_PREFIX}:")
+    await state.update_data(credit_payment_type=payment_type)
+    await state.set_state(ExpenseFlow.choosing_credit_overpayment_action)
+    await callback.message.edit_text(
+        texts.get("expense.choose_credit_overpayment_action"),
+        reply_markup=_credit_overpayment_action_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    ExpenseFlow.choosing_credit_overpayment_action, F.data.startswith(f"{CREDIT_ACTION_PREFIX}:")
+)
+async def choose_credit_overpayment_action(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    action = callback.data.removeprefix(f"{CREDIT_ACTION_PREFIX}:")
+    await state.update_data(credit_reduce_payment=(action == CREDIT_ACTION_REDUCE))
     await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
 
@@ -180,6 +254,9 @@ async def _record_expense(
     subcategory_id = data.get("subcategory_id")
     who = data.get("who") or config.people.get(user_id)
     ledger_id = ledger_user_id(config, user_id)
+    credit_sheet_title = data.get("credit_sheet_title")
+    credit_payment_type = data.get("credit_payment_type")
+    credit_reduce_payment = bool(data.get("credit_reduce_payment", False))
     await state.clear()
 
     with connect(config.db_path) as conn:
@@ -227,4 +304,23 @@ async def _record_expense(
         category_name=category.name,
         subcategory_name=subcategory.name if subcategory else None,
     )
+
+    synced_user_ids = (
+        config.allowed_telegram_ids if config.sync_all_users else (config.owner_telegram_id,)
+    )
+    if credit_sheet_title and user_id in synced_user_ids:
+        outcome = await sync_credit_payment(
+            config,
+            sheet_title=credit_sheet_title,
+            is_early=(credit_payment_type == CREDIT_TYPE_EARLY),
+            amount=amount,
+            reduce_payment=credit_reduce_payment,
+            comment=comment,
+            date_str=format_sheet_date(tx.created_at_utc, config.timezone),
+        )
+        if outcome is CreditSyncOutcome.CAPACITY_EXHAUSTED:
+            suffix += texts.get("expense.credit_capacity_suffix")
+        elif outcome is CreditSyncOutcome.ERROR:
+            suffix += texts.get("expense.credit_sync_error_suffix")
+
     return f"{text}.{suffix}{texts.get('expense.done_suffix')}"

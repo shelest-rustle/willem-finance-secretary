@@ -37,3 +37,8 @@ def format_local_datetime(iso_utc: str, tz_name: str) -> str:
 def format_sheet_datetime(iso_utc: str, tz_name: str) -> str:
     dt = datetime.fromisoformat(iso_utc).astimezone(ZoneInfo(tz_name))
     return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def format_sheet_date(iso_utc: str, tz_name: str) -> str:
+    dt = datetime.fromisoformat(iso_utc).astimezone(ZoneInfo(tz_name))
+    return dt.strftime("%d.%m.%Y")

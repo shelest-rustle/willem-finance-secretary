@@ -38,6 +38,7 @@ def make_config(db_path: Path) -> Config:
         debt_types=(),
         shared_ledger=False,
         sheet_name="Транзакции",
+        credit_sheets={},
     )
 
 

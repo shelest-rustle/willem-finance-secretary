@@ -47,6 +47,11 @@ class Config:
     debt_types: tuple[str, ...]
     shared_ledger: bool
     sheet_name: str
+    # {"МТС Лика": "МТС Кредит Лики", ...} — подкатегория "Кредиты и долги" -> название
+    # листа с графиком этого кредита в той же Google-таблице. Если подкатегория расхода
+    # попадает в этот словарь, включается доп. button-flow (тип платежа / что с
+    # переплатой) и запись в соответствующий кредитный лист — см. willem/credit_sheets.py.
+    credit_sheets: dict[str, str]
 
 
 def ledger_user_id(config: Config, telegram_id: int) -> int:
@@ -139,4 +144,5 @@ def load_config() -> Config:
         debt_types=debt_types,
         shared_ledger=bool(profile.get("shared_ledger", False)),
         sheet_name=profile.get("sheet_name", "Транзакции"),
+        credit_sheets=dict(profile.get("credit_sheets") or {}),
     )
