@@ -186,6 +186,8 @@ messages:
   categories.edit_limit_prompt: "Обозначьте новый предел суммой, либо воспользуйтесь опцией «Без лимита»."
   categories.limit_removed: "Предел снят."
   categories.limit_updated: "Предел обновлён: {amount} на {period}."
+  categories.month_spent_suffix: " Показатель по статье с начала месяца: {amounts}."
+  categories.month_spent_none: " В текущем месяце по статье издержек не зафиксировано."
 
   sources.detail: "«{name}». {type_label} · {currency}.\nОстаток: {amount} {symbol}."
   sources.list_title: "Активы."
@@ -205,6 +207,8 @@ messages:
   reports.label_today: "Сегодня"
   reports.label_week: "За неделю"
   reports.period_no_expenses: "{label}: расходов не зафиксировано."
+  reports.period_category_header: "Разрез по статьям."
+  reports.period_category_line: "«{name}»: {amounts}"
   reports.balances_header: "Кровоток. Деньги — кровь мира, счета — его артерии."
   reports.balances_empty: "Артерий не обнаружено — без них кровоток невозможен."
   reports.balances_line: "«{source}»: {amount} {symbol}"

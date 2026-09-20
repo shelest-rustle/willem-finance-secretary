@@ -55,6 +55,8 @@ categories:
   edit_limit_prompt: "Новый лимит (сумма) или «Без лимита». 🎯"
   limit_removed: "Лимит убран. 🎯"
   limit_updated: "Лимит обновлён: {amount} на {period}. 🎯"
+  month_spent_suffix: " Потрачено с начала месяца: {amounts}. 📊"
+  month_spent_none: " В этом месяце по категории ещё не тратили. 📊"
 
 sources:
   detail: "«{name}». {type_label} · {currency}.\nБаланс: {amount} {symbol}."
@@ -78,6 +80,8 @@ reports:
   label_week: "За неделю"
   period_no_expenses: "{label}: трат нет."
   period_line: "{total} {symbol} по {count} {category_word}"
+  period_category_header: "По категориям: 🗂"
+  period_category_line: "{name}: {amounts}"
   balances_header: "Остатки. ⚖️"
   balances_empty: "Нет активных источников."
   balances_line: "{source}: {amount} {symbol}"

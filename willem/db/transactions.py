@@ -203,6 +203,25 @@ def sum_expenses_by_category(
     return row["total"]
 
 
+def sum_expenses_by_category_grouped(
+    conn: sqlite3.Connection,
+    category_id: str,
+    period_start_utc: str,
+    period_end_utc: str,
+) -> list[tuple[str, float]]:
+    """Как `sum_expenses_by_category`, но сразу по всем валютам — [(валюта, сумма), ...],
+    без смешивания разных валют в одно число. Используется в деталях категории для
+    показа "потрачено с начала месяца" независимо от того, в какой валюте что тратили."""
+    rows = conn.execute(
+        "SELECT currency, COALESCE(SUM(amount), 0) AS total FROM transactions "
+        "WHERE category_id = ? AND type = 'expense' AND deleted = 0 "
+        "AND created_at_utc >= ? AND created_at_utc <= ? "
+        "GROUP BY currency",
+        (category_id, period_start_utc, period_end_utc),
+    ).fetchall()
+    return [(row["currency"], row["total"]) for row in rows]
+
+
 def sum_by_type_and_period(
     conn: sqlite3.Connection, user_id: int, period_start_utc: str, period_end_utc: str
 ) -> list[Transaction]:

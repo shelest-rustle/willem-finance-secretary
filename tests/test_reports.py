@@ -12,6 +12,7 @@ from willem.bot.handlers.reports import (
     _apply_category_edit,
     _apply_comment_edit,
     _balances_text,
+    _period_category_breakdown_text,
     _period_report_text,
     _transaction_summary,
 )
@@ -121,6 +122,47 @@ def test_period_report_splits_by_currency(texts: Texts) -> None:
     )
 
 
+# --- _period_category_breakdown_text ---
+
+
+def test_period_category_breakdown_empty_when_no_expenses(texts: Texts) -> None:
+    assert _period_category_breakdown_text([], {}, texts) == ""
+
+
+def test_period_category_breakdown_ignores_non_expense_types(texts: Texts) -> None:
+    txs = [make_expense(type="income", amount=50000, category_id=None)]
+    assert _period_category_breakdown_text(txs, {}, texts) == ""
+
+
+def test_period_category_breakdown_single_category(texts: Texts) -> None:
+    txs = [
+        make_expense(amount=3400, category_id="c1"),
+        make_expense(amount=600, category_id="c1"),
+    ]
+    text = _period_category_breakdown_text(txs, {"c1": "Продукты"}, texts)
+    assert text == "По категориям: 🗂\n\nПродукты: 4 000 ₸"
+
+
+def test_period_category_breakdown_sorted_by_name_multiple_categories(texts: Texts) -> None:
+    txs = [
+        make_expense(amount=9000, category_id="c2"),
+        make_expense(amount=3400, category_id="c1"),
+    ]
+    text = _period_category_breakdown_text(
+        txs, {"c1": "Транспорт", "c2": "Продукты"}, texts
+    )
+    assert text == "По категориям: 🗂\n\nПродукты: 9 000 ₸\nТранспорт: 3 400 ₸"
+
+
+def test_period_category_breakdown_keeps_currencies_separate(texts: Texts) -> None:
+    txs = [
+        make_expense(amount=3400, currency="KZT", category_id="c1"),
+        make_expense(amount=500, currency="RUB", category_id="c1"),
+    ]
+    text = _period_category_breakdown_text(txs, {"c1": "Продукты"}, texts)
+    assert text == "По категориям: 🗂\n\nПродукты: 3 400 ₸; 500 ₽"
+
+
 # --- _balances_text ---
 
 
@@ -227,13 +269,32 @@ def test_balances_text_debt_wallet_with_limit_shows_breakdown(texts: Texts) -> N
         id="s1", user_id=1, name="Tinkoff Кредитка Лики", type="Кредитная карта", currency="RUB",
         kind="debt", owner=None, credit_limit=185000, is_active=True,
     )
-    text = _balances_text([(card, -55000)], texts, config)
+    # "Остаток" (balance) — это то, что реально доступно к трате прямо сейчас, а не
+    # то, сколько потрачено; "к оплате" = лимит - остаток.
+    text = _balances_text([(card, 130000)], texts, config)
     assert text == (
         "Долговые кошельки. 💳\n\n"
         "«Tinkoff Кредитка Лики»\n"
         "Кредитный лимит: 185 000 ₽\n"
         "На счету: 130 000 ₽\n"
         "К оплате: 55 000 ₽"
+    )
+
+
+def test_balances_text_debt_wallet_fresh_card_fully_available(texts: Texts) -> None:
+    """Свежая, ещё не тронутая карта: остаток выставлен равным лимиту -> к оплате 0."""
+    config = _pantalone_style_config()
+    card = sources.Source(
+        id="s1", user_id=1, name="Tinkoff Кредитка Лики", type="Кредитная карта", currency="RUB",
+        kind="debt", owner=None, credit_limit=185000, is_active=True,
+    )
+    text = _balances_text([(card, 185000)], texts, config)
+    assert text == (
+        "Долговые кошельки. 💳\n\n"
+        "«Tinkoff Кредитка Лики»\n"
+        "Кредитный лимит: 185 000 ₽\n"
+        "На счету: 185 000 ₽\n"
+        "К оплате: 0 ₽"
     )
 
 
@@ -294,7 +355,7 @@ def test_balances_text_three_sections_together(texts: Texts) -> None:
         kind="debt", owner="Лика", credit_limit=None, is_active=True,
     )
     text = _balances_text(
-        [(cash, 10000), (card, -5000), (debt, -10000), (installment, -300000)], texts, config
+        [(cash, 10000), (card, 20000), (debt, -10000), (installment, -300000)], texts, config
     )
     assert text == (
         "Остатки. ⚖️\n\n"

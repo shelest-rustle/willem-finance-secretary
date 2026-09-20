@@ -8,20 +8,36 @@ from willem.db.sources import Source
 from willem.texts import Texts
 
 
-def test_category_detail_text_without_limit(texts: Texts) -> None:
+def test_category_detail_text_without_limit_and_no_spending(texts: Texts) -> None:
     category = Category(
         id="c1", user_id=1, name="Прочее", limit_amount=None, limit_period="month",
         parent_id=None, is_active=True,
     )
-    assert category_detail_text(category, texts) == "«Прочее». Лимит не задан."
+    assert category_detail_text(category, [], texts) == (
+        "«Прочее». Лимит не задан. В этом месяце по категории ещё не тратили. 📊"
+    )
 
 
-def test_category_detail_text_with_limit(texts: Texts) -> None:
+def test_category_detail_text_with_limit_and_month_spending(texts: Texts) -> None:
     category = Category(
         id="c1", user_id=1, name="Питание", limit_amount=50000, limit_period="week",
         parent_id=None, is_active=True,
     )
-    assert category_detail_text(category, texts) == "«Питание». Лимит на неделю: 50 000."
+    text = category_detail_text(category, [("KZT", 12000)], texts)
+    assert text == (
+        "«Питание». Лимит на неделю: 50 000. Потрачено с начала месяца: 12 000 ₸. 📊"
+    )
+
+
+def test_category_detail_text_month_spending_multiple_currencies(texts: Texts) -> None:
+    category = Category(
+        id="c1", user_id=1, name="Питание", limit_amount=None, limit_period="month",
+        parent_id=None, is_active=True,
+    )
+    text = category_detail_text(category, [("KZT", 12000), ("RUB", 500)], texts)
+    assert text == (
+        "«Питание». Лимит не задан. Потрачено с начала месяца: 12 000 ₸; 500 ₽. 📊"
+    )
 
 
 class _FakeConfig:

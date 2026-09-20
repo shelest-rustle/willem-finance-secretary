@@ -16,10 +16,12 @@ from willem.bot.keyboards import (
 )
 from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
+from willem.db import transactions as transactions_db
 from willem.db.categories import Category
 from willem.db.connection import connect
-from willem.formatting import format_amount, period_word
+from willem.formatting import format_amount, format_currency_totals, period_word
 from willem.texts import Texts
+from willem.timeutil import period_bounds
 
 router = Router(name="categories")
 
@@ -57,15 +59,21 @@ def _list_keyboard(items: list[Category]) -> InlineKeyboardMarkup:
     )
 
 
-def _detail_text(category: Category, texts: Texts) -> str:
+def _detail_text(category: Category, month_spent: list[tuple[str, float]], texts: Texts) -> str:
     if category.limit_amount is None:
-        return texts.get("categories.detail_no_limit", name=category.name)
-    return texts.get(
-        "categories.detail_with_limit",
-        name=category.name,
-        period=period_word(category.limit_period),
-        limit=format_amount(category.limit_amount),
-    )
+        text = texts.get("categories.detail_no_limit", name=category.name)
+    else:
+        text = texts.get(
+            "categories.detail_with_limit",
+            name=category.name,
+            period=period_word(category.limit_period),
+            limit=format_amount(category.limit_amount),
+        )
+    if month_spent:
+        text += texts.get("categories.month_spent_suffix", amounts=format_currency_totals(month_spent))
+    else:
+        text += texts.get("categories.month_spent_none")
+    return text
 
 
 def _detail_keyboard(category_id: str) -> InlineKeyboardMarkup:
@@ -100,13 +108,14 @@ async def view_category(callback: CallbackQuery, config: Config, texts: Texts) -
     category_id = callback.data.removeprefix(f"{VIEW_PREFIX}:")
     with connect(config.db_path) as conn:
         category = categories_db.get_category(conn, category_id)
-
-    if category is None:
-        await callback.answer(texts.get("categories.not_found"))
-        return
+        if category is None:
+            await callback.answer(texts.get("categories.not_found"))
+            return
+        start, end = period_bounds("month", config.timezone)
+        month_spent = transactions_db.sum_expenses_by_category_grouped(conn, category_id, start, end)
 
     await callback.message.edit_text(
-        _detail_text(category, texts), reply_markup=_detail_keyboard(category_id)
+        _detail_text(category, month_spent, texts), reply_markup=_detail_keyboard(category_id)
     )
     await callback.answer()
 

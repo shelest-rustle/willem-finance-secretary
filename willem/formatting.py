@@ -35,5 +35,14 @@ def format_amount(amount: float) -> str:
     return text.replace(",", " ")
 
 
+def format_currency_totals(totals: list[tuple[str, float]]) -> str:
+    """[("KZT", 3400), ("RUB", 500)] -> "3 400 ₸; 500 ₽" — суммы в разных валютах не
+    складываются друг с другом, только перечисляются рядом (см. format_amount)."""
+    return "; ".join(
+        f"{format_amount(amount)} {currency_symbol(currency)}"
+        for currency, amount in sorted(totals)
+    )
+
+
 def period_word(period: str) -> str:
     return _PERIOD_WORDS.get(period, period)

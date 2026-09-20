@@ -22,7 +22,7 @@ from willem.db import transactions as transactions_db
 from willem.db.sources import matches_keywords
 from willem.db.connection import connect
 from willem.db.transactions import Transaction
-from willem.formatting import currency_symbol, format_amount
+from willem.formatting import currency_symbol, format_amount, format_currency_totals
 from willem.texts import Texts
 from willem.timeutil import format_local_datetime, period_bounds
 
@@ -65,6 +65,35 @@ def _period_report_text(period_transactions: list[Transaction], label: str, text
         for currency, (total, category_ids) in sorted(by_currency.items())
     ]
     return f"{label}: " + "; ".join(parts) + "."
+
+
+def _period_category_breakdown_text(
+    period_transactions: list[Transaction], category_names: dict[str, str], texts: Texts
+) -> str:
+    """Разрез расходов периода по категориям — сколько потрачено на каждую (по всем
+    валютам, без смешивания их друг с другом). Пусто, если трат за период не было."""
+    expenses = [t for t in period_transactions if t.type == "expense"]
+    if not expenses:
+        return ""
+
+    totals: dict[tuple[str, str], float] = {}
+    for t in expenses:
+        key = (t.category_id, t.currency)
+        totals[key] = totals.get(key, 0.0) + t.amount
+
+    by_category: dict[str, list[tuple[str, float]]] = {}
+    for (category_id, currency), amount in totals.items():
+        by_category.setdefault(category_id, []).append((currency, amount))
+
+    lines = [
+        texts.get(
+            "reports.period_category_line",
+            name=category_names.get(category_id, "?"),
+            amounts=format_currency_totals(by_category[category_id]),
+        )
+        for category_id in sorted(by_category, key=lambda cid: category_names.get(cid, ""))
+    ]
+    return f"{texts.get('reports.period_category_header')}\n\n" + "\n".join(lines)
 
 
 def _owner_sort_key(owner: str | None, preferred: list[str]) -> tuple[int, str]:
@@ -137,8 +166,14 @@ def _balance_block(
 
 
 def _debt_wallet_lines(balances: list[tuple[sources_db.Source, float]], texts: Texts) -> list[str]:
-    """Для кредиток/кубышек — не просто остаток, а разбивка: лимит, доступно, к оплате
-    (см. запрос: остаток по кредитке сам по себе вводит в заблуждение без лимита)."""
+    """Для кредиток/кубышек — не просто остаток, а разбивка: лимит, доступно, к оплате.
+
+    "Остаток" (`balance`) источника — это то, что сейчас реально доступно к трате по
+    карте (уменьшается расходами с неё, увеличивается погашениями/пополнениями) — то
+    есть уже само по себе и есть "На счету", без каких-либо дополнительных вычислений.
+    "К оплате" — это то, что из выданного лимита уже израсходовано: лимит минус остаток.
+    Для свежей, ещё не потраченной карты остаток должен быть выставлен равным лимиту
+    (через /sources → "⚖️ Остаток") — тогда "к оплате" закономерно покажет 0."""
     ordered = sorted(balances, key=lambda pair: pair[1], reverse=True)
     lines: list[str] = []
     for source, balance in ordered:
@@ -151,8 +186,8 @@ def _debt_wallet_lines(balances: list[tuple[sources_db.Source, float]], texts: T
                 )
             )
         else:
-            available = source.credit_limit + balance
-            owed = -balance
+            available = balance
+            owed = source.credit_limit - balance
             lines.append(
                 texts.get(
                     "reports.debt_wallet_limit",
@@ -301,26 +336,46 @@ def _edit_last_keyboard(tx_type: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def _resolve_category_names(conn, period_transactions: list[Transaction]) -> dict[str, str]:
+    category_ids = {t.category_id for t in period_transactions if t.type == "expense"}
+    names = {}
+    for category_id in category_ids:
+        category = categories_db.get_category(conn, category_id)
+        names[category_id] = category.name if category else "?"
+    return names
+
+
+async def _period_report_answer(
+    message: Message, config: Config, texts: Texts, user_id: int, period: str, label_key: str
+) -> None:
+    start, end = period_bounds(period, config.timezone)
+    with connect(config.db_path) as conn:
+        period_transactions = transactions_db.sum_by_type_and_period(
+            conn, ledger_user_id(config, user_id), start, end
+        )
+        category_names = _resolve_category_names(conn, period_transactions)
+
+    text = _period_report_text(period_transactions, texts.get(label_key), texts)
+    breakdown = _period_category_breakdown_text(period_transactions, category_names, texts)
+    if breakdown:
+        text += "\n\n" + breakdown
+    await message.answer(text)
+
+
 @router.message(or_f(Command("today"), F.text == TODAY_BUTTON))
 async def show_today(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
-    start, end = period_bounds("today", config.timezone)
-    with connect(config.db_path) as conn:
-        period_transactions = transactions_db.sum_by_type_and_period(
-            conn, ledger_user_id(config, message.from_user.id), start, end
-        )
-    await message.answer(_period_report_text(period_transactions, texts.get("reports.label_today"), texts))
+    await _period_report_answer(
+        message, config, texts, message.from_user.id, "today", "reports.label_today"
+    )
 
 
 @router.message(or_f(Command("week"), F.text == WEEK_BUTTON))
 async def show_week(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
-    start, end = period_bounds("week", config.timezone)
-    with connect(config.db_path) as conn:
-        period_transactions = transactions_db.sum_by_type_and_period(
-            conn, ledger_user_id(config, message.from_user.id), start, end
-        )
-    await message.answer(_period_report_text(period_transactions, texts.get("reports.label_week"), texts))
+    await _period_report_answer(
+        message, config, texts, message.from_user.id, "week", "reports.label_week"
+    )
 
 
 @router.message(or_f(Command("balances"), F.text == BALANCES_BUTTON))
