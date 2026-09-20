@@ -12,7 +12,7 @@ from willem.bot.keyboards import SOURCES_BUTTON, build_choice_keyboard, build_ma
 from willem.config import Config, ledger_user_id
 from willem.db import sources as sources_db
 from willem.db.connection import connect
-from willem.db.sources import Source
+from willem.db.sources import Source, matches_keywords
 from willem.db.transactions import get_source_balance, insert_transaction
 from willem.formatting import currency_symbol, format_amount, source_type_label
 from willem.sheets_sync import sync_after_insert
@@ -28,6 +28,7 @@ RENAME_PREFIX = "src_rename"
 CURRENCY_EDIT_PREFIX = "src_currency_edit"
 CURRENCY_SET_PREFIX = "src_currency_set"
 ADJUST_PREFIX = "src_adjust"
+CREDIT_LIMIT_EDIT_PREFIX = "src_limit_edit"
 ARCHIVE_PREFIX = "src_archive"
 BACK_CB = "src_back"
 
@@ -39,6 +40,15 @@ class SourceFlow(StatesGroup):
     renaming = State()
     editing_currency = State()
     adjusting_balance = State()
+    editing_credit_limit = State()
+
+
+def _is_debt_wallet(source: Source, config: Config) -> bool:
+    """Источники, для которых имеет смысл кредитный лимит (кредитки/кубышки) — по
+    тем же ключевым словам, что и группировка в /balances, см. Config.debt_wallet_keywords."""
+    return bool(config.debt_wallet_keywords) and matches_keywords(
+        source.name, config.debt_wallet_keywords
+    )
 
 
 async def _list_sources(config: Config, user_id: int) -> list[Source]:
@@ -52,9 +62,9 @@ def _list_keyboard(items: list[Source]) -> InlineKeyboardMarkup:
     )
 
 
-def _detail_text(source: Source, balance: float, texts: Texts) -> str:
+def _detail_text(source: Source, balance: float, texts: Texts, config: Config) -> str:
     symbol = currency_symbol(source.currency)
-    return texts.get(
+    text = texts.get(
         "sources.detail",
         name=source.name,
         type_label=source_type_label(source.type),
@@ -62,16 +72,29 @@ def _detail_text(source: Source, balance: float, texts: Texts) -> str:
         amount=format_amount(balance),
         symbol=symbol,
     )
+    if _is_debt_wallet(source, config):
+        if source.credit_limit is None:
+            text += texts.get("sources.credit_limit_missing_suffix")
+        else:
+            text += texts.get(
+                "sources.credit_limit_suffix", amount=format_amount(source.credit_limit), symbol=symbol
+            )
+    return text
 
 
-def _detail_keyboard(source_id: str) -> InlineKeyboardMarkup:
+def _detail_keyboard(source_id: str, *, show_credit_limit: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Переименовать", callback_data=f"{RENAME_PREFIX}:{source_id}")
     builder.button(text="💱 Валюта", callback_data=f"{CURRENCY_EDIT_PREFIX}:{source_id}")
     builder.button(text="⚖️ Остаток", callback_data=f"{ADJUST_PREFIX}:{source_id}")
+    if show_credit_limit:
+        builder.button(text="💳 Кредитный лимит", callback_data=f"{CREDIT_LIMIT_EDIT_PREFIX}:{source_id}")
     builder.button(text="🗄 Архивировать", callback_data=f"{ARCHIVE_PREFIX}:{source_id}")
     builder.button(text="‹ Назад", callback_data=BACK_CB)
-    builder.adjust(2, 2, 1)
+    if show_credit_limit:
+        builder.adjust(2, 2, 2)
+    else:
+        builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
@@ -103,7 +126,8 @@ async def view_source(callback: CallbackQuery, config: Config, texts: Texts) -> 
         balance = get_source_balance(conn, source_id)
 
     await callback.message.edit_text(
-        _detail_text(source, balance, texts), reply_markup=_detail_keyboard(source_id)
+        _detail_text(source, balance, texts, config),
+        reply_markup=_detail_keyboard(source_id, show_credit_limit=_is_debt_wallet(source, config)),
     )
     await callback.answer()
 
@@ -210,6 +234,36 @@ async def finish_edit_currency(
         sources_db.update_source(conn, data["source_id"], currency=currency)
     await callback.message.edit_text(texts.get("sources.currency_updated", currency=currency))
     await callback.answer()
+
+
+# --- Кредитный лимит ---
+
+
+@router.callback_query(F.data.startswith(f"{CREDIT_LIMIT_EDIT_PREFIX}:"))
+async def start_edit_credit_limit(
+    callback: CallbackQuery, state: FSMContext, texts: Texts
+) -> None:
+    source_id = callback.data.removeprefix(f"{CREDIT_LIMIT_EDIT_PREFIX}:")
+    await state.update_data(source_id=source_id)
+    await state.set_state(SourceFlow.editing_credit_limit)
+    await callback.message.edit_text(texts.get("sources.credit_limit_prompt"))
+    await callback.answer()
+
+
+@router.message(SourceFlow.editing_credit_limit, F.text.regexp(EXPENSE_AMOUNT_RE))
+async def finish_edit_credit_limit(
+    message: Message, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    credit_limit = parse_amount(message.text)
+    data = await state.get_data()
+    await state.clear()
+    with connect(config.db_path) as conn:
+        source = sources_db.get_source(conn, data["source_id"])
+        sources_db.set_credit_limit(conn, data["source_id"], credit_limit)
+    symbol = currency_symbol(source.currency)
+    await message.answer(
+        texts.get("sources.credit_limit_updated", amount=format_amount(credit_limit), symbol=symbol)
+    )
 
 
 # --- Коррекция остатка ---

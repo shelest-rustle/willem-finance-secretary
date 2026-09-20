@@ -39,6 +39,8 @@ def make_config(db_path: Path) -> Config:
         shared_ledger=False,
         sheet_name="Транзакции",
         credit_sheets={},
+        debt_wallet_keywords=(),
+        debt_obligation_keywords=(),
     )
 
 

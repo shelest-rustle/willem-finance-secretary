@@ -47,6 +47,14 @@ class Config:
     debt_types: tuple[str, ...]
     shared_ledger: bool
     sheet_name: str
+    # Профильная классификация долговых источников (kind="debt") для /balances — если
+    # заданы, вместо единой секции "долги" показываются "долговые кошельки" (кредитки/
+    # кубышки, с кредитным лимитом) и "долговые обязательства" (личные долги) отдельно,
+    # а источники, не подошедшие ни под одно ключевое слово, из /balances исключаются
+    # (см. willem/bot/handlers/reports.py::_balances_text). Пустые кортежи — профиль не
+    # настроен на новую схему, используется старое поведение (единая секция "долги").
+    debt_wallet_keywords: tuple[str, ...]
+    debt_obligation_keywords: tuple[str, ...]
     # {"МТС Лика": "МТС Кредит Лики", ...} — подкатегория "Кредиты и долги" -> название
     # листа с графиком этого кредита в той же Google-таблице. Если подкатегория расхода
     # попадает в этот словарь, включается доп. button-flow (тип платежа / что с
@@ -145,4 +153,6 @@ def load_config() -> Config:
         shared_ledger=bool(profile.get("shared_ledger", False)),
         sheet_name=profile.get("sheet_name", "Транзакции"),
         credit_sheets=dict(profile.get("credit_sheets") or {}),
+        debt_wallet_keywords=tuple(profile.get("debt_wallet_keywords", [])),
+        debt_obligation_keywords=tuple(profile.get("debt_obligation_keywords", [])),
     )

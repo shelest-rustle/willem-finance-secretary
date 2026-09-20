@@ -47,6 +47,8 @@ def make_config(db_path: Path) -> Config:
         shared_ledger=False,
         sheet_name="Транзакции",
         credit_sheets={},
+        debt_wallet_keywords=(),
+        debt_obligation_keywords=(),
     )
 
 
@@ -129,9 +131,9 @@ def test_balances_text_empty(texts: Texts) -> None:
 
 def test_balances_text_sorted_descending_with_totals(texts: Texts) -> None:
     config = make_config(Path("unused"))
-    kaspi = sources.Source(id="s1", user_id=1, name="Kaspi", type="card", currency="KZT", kind="asset", owner=None, is_active=True)
-    bcc = sources.Source(id="s2", user_id=1, name="bcc", type="card", currency="KZT", kind="asset", owner=None, is_active=True)
-    tbank = sources.Source(id="s3", user_id=1, name="Т-банк", type="card", currency="RUB", kind="asset", owner=None, is_active=True)
+    kaspi = sources.Source(id="s1", user_id=1, name="Kaspi", type="card", currency="KZT", kind="asset", owner=None, credit_limit=None, is_active=True)
+    bcc = sources.Source(id="s2", user_id=1, name="bcc", type="card", currency="KZT", kind="asset", owner=None, credit_limit=None, is_active=True)
+    tbank = sources.Source(id="s3", user_id=1, name="Т-банк", type="card", currency="RUB", kind="asset", owner=None, credit_limit=None, is_active=True)
     text = _balances_text([(kaspi, 71000), (bcc, -39000), (tbank, 500.5)], texts, config)
     assert text == (
         "Остатки. ⚖️\n\n"
@@ -148,11 +150,11 @@ def test_balances_text_separates_debts_from_assets(texts: Texts) -> None:
     config = make_config(Path("unused"))
     kaspi = sources.Source(
         id="s1", user_id=1, name="Kaspi", type="card", currency="KZT",
-        kind="asset", owner=None, is_active=True,
+        kind="asset", owner=None, credit_limit=None, is_active=True,
     )
     debt = sources.Source(
         id="s2", user_id=1, name="Т-Кредит", type="Кредит", currency="KZT",
-        kind="debt", owner=None, is_active=True,
+        kind="debt", owner=None, credit_limit=None, is_active=True,
     )
     text = _balances_text([(kaspi, 71000), (debt, -30000)], texts, config)
     assert text == (
@@ -171,19 +173,19 @@ def test_balances_text_groups_by_owner_when_present(texts: Texts) -> None:
     config = replace(make_config(Path("unused")), people={1: "Лика", 2: "Ярослав"})
     lika_card = sources.Source(
         id="s1", user_id=1, name="Kaspi Лики", type="card", currency="KZT",
-        kind="asset", owner="Лика", is_active=True,
+        kind="asset", owner="Лика", credit_limit=None, is_active=True,
     )
     yaroslav_card = sources.Source(
         id="s2", user_id=1, name="Kaspi Ярослава", type="card", currency="KZT",
-        kind="asset", owner="Ярослав", is_active=True,
+        kind="asset", owner="Ярослав", credit_limit=None, is_active=True,
     )
     shared_cash = sources.Source(
         id="s3", user_id=1, name="Наличные", type="cash", currency="KZT",
-        kind="asset", owner="Семья", is_active=True,
+        kind="asset", owner="Семья", credit_limit=None, is_active=True,
     )
     lika_debt = sources.Source(
         id="s4", user_id=1, name="Т-Кредит Лики", type="Кредит", currency="RUB",
-        kind="debt", owner="Лика", is_active=True,
+        kind="debt", owner="Лика", credit_limit=None, is_active=True,
     )
     text = _balances_text(
         [(lika_card, 50000), (yaroslav_card, 30000), (shared_cash, 15000), (lika_debt, -100000)],
@@ -205,6 +207,109 @@ def test_balances_text_groups_by_owner_when_present(texts: Texts) -> None:
         "Лика:\n"
         "Т-Кредит Лики: -100 000 ₽\n\n"
         "Итого долгов: -100 000 ₽."
+    )
+
+
+# --- _balances_text: 3-секционная схема (Pantalone: debt_wallet_keywords/debt_obligation_keywords) ---
+
+
+def _pantalone_style_config() -> Config:
+    return replace(
+        make_config(Path("unused")),
+        debt_wallet_keywords=("кредитка", "кубышка"),
+        debt_obligation_keywords=("долг",),
+    )
+
+
+def test_balances_text_debt_wallet_with_limit_shows_breakdown(texts: Texts) -> None:
+    config = _pantalone_style_config()
+    card = sources.Source(
+        id="s1", user_id=1, name="Tinkoff Кредитка Лики", type="Кредитная карта", currency="RUB",
+        kind="debt", owner=None, credit_limit=185000, is_active=True,
+    )
+    text = _balances_text([(card, -55000)], texts, config)
+    assert text == (
+        "Долговые кошельки. 💳\n\n"
+        "«Tinkoff Кредитка Лики»\n"
+        "Кредитный лимит: 185 000 ₽\n"
+        "На счету: 130 000 ₽\n"
+        "К оплате: 55 000 ₽"
+    )
+
+
+def test_balances_text_debt_wallet_without_limit_shows_fallback(texts: Texts) -> None:
+    config = _pantalone_style_config()
+    card = sources.Source(
+        id="s1", user_id=1, name="Tinkoff Кредитка Лики", type="Кредитная карта", currency="RUB",
+        kind="debt", owner=None, credit_limit=None, is_active=True,
+    )
+    text = _balances_text([(card, -55000)], texts, config)
+    assert text == (
+        "Долговые кошельки. 💳\n\n"
+        "«Tinkoff Кредитка Лики»\n"
+        "Остаток: -55 000 ₽ (лимит не задан — /sources)"
+    )
+
+
+def test_balances_text_debt_obligations_have_no_total(texts: Texts) -> None:
+    """Пункт запроса: убрать некорректный общий итог у долговых источников."""
+    config = _pantalone_style_config()
+    debt = sources.Source(
+        id="s1", user_id=1, name="Долг Роме", type="Долг человеку", currency="RUB",
+        kind="debt", owner="Семья", credit_limit=None, is_active=True,
+    )
+    text = _balances_text([(debt, -15000)], texts, config)
+    assert text == "Долги. ⚖️\n\nСемья:\nДолг Роме: -15 000 ₽"
+    assert "Итого" not in text
+
+
+def test_balances_text_debt_source_matching_neither_keyword_is_excluded(texts: Texts) -> None:
+    """Источники типа 'Кредит' (например installment-кредиты, теперь в отдельных
+    Google-листах) не подходят ни под кошельки, ни под обязательства — не показываются."""
+    config = _pantalone_style_config()
+    installment = sources.Source(
+        id="s1", user_id=1, name="Т-Кредит Лики", type="Кредит", currency="RUB",
+        kind="debt", owner="Лика", credit_limit=None, is_active=True,
+    )
+    text = _balances_text([(installment, -300000)], texts, config)
+    assert text == "Нет активных источников."
+
+
+def test_balances_text_three_sections_together(texts: Texts) -> None:
+    config = _pantalone_style_config()
+    cash = sources.Source(
+        id="s1", user_id=1, name="Наличные", type="Наличные", currency="KZT",
+        kind="asset", owner="Семья", credit_limit=None, is_active=True,
+    )
+    card = sources.Source(
+        id="s2", user_id=1, name="Т-Кубышка Лики", type="Кредитный лимит", currency="RUB",
+        kind="debt", owner="Лика", credit_limit=25000, is_active=True,
+    )
+    debt = sources.Source(
+        id="s3", user_id=1, name="Долг Артёму", type="Долг человеку", currency="RUB",
+        kind="debt", owner="Семья", credit_limit=None, is_active=True,
+    )
+    installment = sources.Source(
+        id="s4", user_id=1, name="М-Кредит Лики", type="Кредит", currency="RUB",
+        kind="debt", owner="Лика", credit_limit=None, is_active=True,
+    )
+    text = _balances_text(
+        [(cash, 10000), (card, -5000), (debt, -10000), (installment, -300000)], texts, config
+    )
+    assert text == (
+        "Остатки. ⚖️\n\n"
+        "Семья:\n"
+        "Наличные: 10 000 ₸\n\n"
+        "Всего: 10 000 ₸.\n\n"
+        "Долговые кошельки. 💳\n\n"
+        "Лика:\n"
+        "«Т-Кубышка Лики»\n"
+        "Кредитный лимит: 25 000 ₽\n"
+        "На счету: 20 000 ₽\n"
+        "К оплате: 5 000 ₽\n\n"
+        "Долги. ⚖️\n\n"
+        "Семья:\n"
+        "Долг Артёму: -10 000 ₽"
     )
 
 

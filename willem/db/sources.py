@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 
@@ -14,6 +15,7 @@ class Source:
     currency: str
     kind: str
     owner: str | None
+    credit_limit: float | None
     is_active: bool
 
     @classmethod
@@ -26,6 +28,7 @@ class Source:
             currency=row["currency"],
             kind=row["kind"],
             owner=row["owner"],
+            credit_limit=row["credit_limit"],
             is_active=bool(row["is_active"]),
         )
 
@@ -38,12 +41,13 @@ def create_source(
     currency: str = "KZT",
     kind: str = "asset",
     owner: str | None = None,
+    credit_limit: float | None = None,
 ) -> Source:
     source_id = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO sources (id, user_id, name, type, currency, kind, owner, is_active) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-        (source_id, user_id, name, type, currency, kind, owner),
+        "INSERT INTO sources (id, user_id, name, type, currency, kind, owner, credit_limit, is_active) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        (source_id, user_id, name, type, currency, kind, owner, credit_limit),
     )
     return Source(
         id=source_id,
@@ -53,6 +57,7 @@ def create_source(
         currency=currency,
         kind=kind,
         owner=owner,
+        credit_limit=credit_limit,
         is_active=True,
     )
 
@@ -95,5 +100,18 @@ def update_source(
     conn.execute(f"UPDATE sources SET {', '.join(fields)} WHERE id = ?", params)
 
 
+def set_credit_limit(conn: sqlite3.Connection, source_id: str, credit_limit: float) -> None:
+    conn.execute("UPDATE sources SET credit_limit = ? WHERE id = ?", (credit_limit, source_id))
+
+
 def archive_source(conn: sqlite3.Connection, source_id: str) -> None:
     conn.execute("UPDATE sources SET is_active = 0 WHERE id = ?", (source_id,))
+
+
+def matches_keywords(name: str, keywords: Sequence[str]) -> bool:
+    """Содержит ли название источника хотя бы одно из ключевых слов (без учёта
+    регистра) — используется для профильной классификации долговых источников
+    (кредитки/кубышки vs личные долги), см. `Config.debt_wallet_keywords` /
+    `Config.debt_obligation_keywords`."""
+    lowered = name.lower()
+    return any(keyword.lower() in lowered for keyword in keywords)

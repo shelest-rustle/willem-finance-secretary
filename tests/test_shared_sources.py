@@ -37,6 +37,8 @@ def make_config(**overrides) -> Config:
         shared_ledger=False,
         sheet_name="Учёт",
         credit_sheets={},
+        debt_wallet_keywords=(),
+        debt_obligation_keywords=(),
     )
     base.update(overrides)
     return Config(**base)

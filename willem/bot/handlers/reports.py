@@ -19,6 +19,7 @@ from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
+from willem.db.sources import matches_keywords
 from willem.db.connection import connect
 from willem.db.transactions import Transaction
 from willem.formatting import currency_symbol, format_amount
@@ -87,29 +88,43 @@ def _balance_lines(balances: list[tuple[sources_db.Source, float]], texts: Texts
     ]
 
 
-def _balance_block(
+def _grouped_lines(
     balances: list[tuple[sources_db.Source, float]],
     texts: Texts,
-    *,
-    header_key: str,
-    total_key: str,
     owner_order: list[str],
-) -> str:
+    line_builder,
+) -> list[str]:
+    """Строит список строк, сгруппированных по владельцу источника (`config.people`,
+    затем прочие метки владельца, например "Семья"). Для профилей без владельцев у
+    источников (например `willem`) группировка не показывается — плоский список."""
     owners = {source.owner for source, _ in balances}
     if owners == {None}:
-        # Ни у одного источника нет владельца (например у `willem`) — плоский список,
-        # без заголовков по человеку.
-        lines = _balance_lines(balances, texts)
+        lines = line_builder(balances, texts)
     else:
         lines = []
         for owner in sorted(owners, key=lambda o: _owner_sort_key(o, owner_order)):
             group = [(s, b) for s, b in balances if s.owner == owner]
             if owner is not None:
                 lines.append(texts.get("reports.balances_owner_header", owner=owner))
-            lines.extend(_balance_lines(group, texts))
+            lines.extend(line_builder(group, texts))
             lines.append("")
-        if lines and lines[-1] == "":
-            lines.pop()
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _balance_block(
+    balances: list[tuple[sources_db.Source, float]],
+    texts: Texts,
+    *,
+    header_key: str,
+    owner_order: list[str],
+    total_key: str | None = None,
+) -> str:
+    lines = _grouped_lines(balances, texts, owner_order, _balance_lines)
+    body = f"{texts.get(header_key)}\n\n" + "\n".join(lines)
+    if total_key is None:
+        return body
 
     totals: dict[str, float] = {}
     for source, balance in balances:
@@ -118,29 +133,63 @@ def _balance_block(
         f"{format_amount(total)} {currency_symbol(currency)}"
         for currency, total in sorted(totals.items())
     ]
+    return body + f"\n\n{texts.get(total_key)}" + ", ".join(total_parts) + "."
 
-    return (
-        f"{texts.get(header_key)}\n\n"
-        + "\n".join(lines)
-        + f"\n\n{texts.get(total_key)}"
-        + ", ".join(total_parts)
-        + "."
-    )
+
+def _debt_wallet_lines(balances: list[tuple[sources_db.Source, float]], texts: Texts) -> list[str]:
+    """Для кредиток/кубышек — не просто остаток, а разбивка: лимит, доступно, к оплате
+    (см. запрос: остаток по кредитке сам по себе вводит в заблуждение без лимита)."""
+    ordered = sorted(balances, key=lambda pair: pair[1], reverse=True)
+    lines: list[str] = []
+    for source, balance in ordered:
+        symbol = currency_symbol(source.currency)
+        lines.append(texts.get("reports.debt_wallet_name", name=source.name))
+        if source.credit_limit is None:
+            lines.append(
+                texts.get(
+                    "reports.debt_wallet_no_limit", amount=format_amount(balance), symbol=symbol
+                )
+            )
+        else:
+            available = source.credit_limit + balance
+            owed = -balance
+            lines.append(
+                texts.get(
+                    "reports.debt_wallet_limit",
+                    amount=format_amount(source.credit_limit),
+                    symbol=symbol,
+                )
+            )
+            lines.append(
+                texts.get("reports.debt_wallet_available", amount=format_amount(available), symbol=symbol)
+            )
+            lines.append(
+                texts.get("reports.debt_wallet_owed", amount=format_amount(owed), symbol=symbol)
+            )
+        lines.append("")
+    return lines
+
+
+def _debt_wallet_block(
+    balances: list[tuple[sources_db.Source, float]], texts: Texts, owner_order: list[str]
+) -> str:
+    lines = _grouped_lines(balances, texts, owner_order, _debt_wallet_lines)
+    return f"{texts.get('reports.debt_wallets_header')}\n\n" + "\n".join(lines)
 
 
 def _balances_text(
     balances: list[tuple[sources_db.Source, float]], texts: Texts, config: Config
 ) -> str:
-    """Активы (`kind != 'debt'`) и долги (`kind == 'debt'`) — отдельными блоками, не смешивая
-    их в общий итог (см. UPGRADE_spec.md, 9.5); внутри каждого блока — по владельцу источника
-    (`config.people`, затем прочие метки владельца, например "Семья"). Для профилей без
-    владельцев у источников (например `willem`) группировка не показывается — плоский список,
-    как и раньше."""
+    """Активы (`kind != 'debt'`) — секция "Кровоток", как и раньше. Долговые источники
+    (`kind == 'debt'`) — если в профиле заданы `debt_wallet_keywords`/`debt_obligation_keywords`
+    (сейчас только Pantalone), делятся по подстроке в названии на "Долговые кошельки"
+    (кредитки/кубышки — с разбивкой лимит/доступно/к оплате, без общего итога, т.к. лимиты
+    и остатки разных источников складывать в одну цифру некорректно) и "Долговые обязательства"
+    (личные долги). Источники, не подошедшие ни под одно ключевое слово (например installment-
+    кредиты, которые теперь ведутся в отдельных Google-листах), в /balances не показываются.
+    Если ни одно ключевое слово не задано — прежнее поведение: единая секция "Долги" с итогом."""
     assets = [(s, b) for s, b in balances if s.kind != "debt"]
     debts = [(s, b) for s, b in balances if s.kind == "debt"]
-
-    if not assets and not debts:
-        return texts.get("reports.balances_empty")
 
     owner_order = list(dict.fromkeys(config.people.values()))
     blocks = []
@@ -152,7 +201,22 @@ def _balances_text(
                 owner_order=owner_order,
             )
         )
-    if debts:
+
+    if config.debt_wallet_keywords or config.debt_obligation_keywords:
+        wallets = [(s, b) for s, b in debts if matches_keywords(s.name, config.debt_wallet_keywords)]
+        obligations = [
+            (s, b)
+            for s, b in debts
+            if not matches_keywords(s.name, config.debt_wallet_keywords)
+            and matches_keywords(s.name, config.debt_obligation_keywords)
+        ]
+        if wallets:
+            blocks.append(_debt_wallet_block(wallets, texts, owner_order))
+        if obligations:
+            blocks.append(
+                _balance_block(obligations, texts, header_key="reports.debts_header", owner_order=owner_order)
+            )
+    elif debts:
         blocks.append(
             _balance_block(
                 debts, texts,
@@ -160,6 +224,9 @@ def _balances_text(
                 owner_order=owner_order,
             )
         )
+
+    if not blocks:
+        return texts.get("reports.balances_empty")
     return "\n\n".join(blocks)
 
 

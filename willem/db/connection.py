@@ -13,6 +13,7 @@ _INDEXES_PATH = Path(__file__).parent / "indexes.sql"
 _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sources", "kind", "TEXT NOT NULL DEFAULT 'asset'"),
     ("sources", "owner", "TEXT"),
+    ("sources", "credit_limit", "REAL"),
     ("categories", "parent_id", "TEXT REFERENCES categories(id)"),
     ("transactions", "subcategory_id", "TEXT REFERENCES categories(id)"),
     ("transactions", "who", "TEXT"),

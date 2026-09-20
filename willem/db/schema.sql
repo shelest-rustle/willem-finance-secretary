@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS sources (
     currency    TEXT NOT NULL DEFAULT 'KZT',
     kind        TEXT NOT NULL DEFAULT 'asset',  -- asset | debt
     owner       TEXT,               -- информационно: кому принадлежит (профиль "домохозяйство")
+    credit_limit REAL,              -- только для кредиток/кубышек, вводится вручную через /sources
     is_active   INTEGER NOT NULL DEFAULT 1
 );
 

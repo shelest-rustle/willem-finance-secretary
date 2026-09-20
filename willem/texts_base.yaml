@@ -67,6 +67,10 @@ sources:
   currency_updated: "Валюта обновлена: {currency}. 💱"
   adjust_prompt: "Текущий остаток: {balance} {symbol}.\nВведите фактический остаток. ⚖️"
   adjusted: "Остаток обновлён: {amount} {symbol}.{suffix} ⚖️"
+  credit_limit_suffix: "\nКредитный лимит: {amount} {symbol}."
+  credit_limit_missing_suffix: "\nКредитный лимит не задан — укажите кнопкой ниже. 💳"
+  credit_limit_prompt: "Кредитный лимит (сумма). 💳"
+  credit_limit_updated: "Кредитный лимит обновлён: {amount} {symbol}. 💳"
   adjustment_comment: "Коррекция остатка"
 
 reports:
@@ -81,6 +85,12 @@ reports:
   balances_total_prefix: "Всего: "
   debts_header: "Долги. ⚖️"
   debts_total_prefix: "Итого долгов: "
+  debt_wallets_header: "Долговые кошельки. 💳"
+  debt_wallet_name: "«{name}»"
+  debt_wallet_limit: "Кредитный лимит: {amount} {symbol}"
+  debt_wallet_available: "На счету: {amount} {symbol}"
+  debt_wallet_owed: "К оплате: {amount} {symbol}"
+  debt_wallet_no_limit: "Остаток: {amount} {symbol} (лимит не задан — /sources)"
   summary_expense: "💸 {amount} {symbol} — {category} ({source})"
   summary_income: "💰 {amount} {symbol} — {source}"
   summary_transfer_same: "🔄 {amount} {symbol} {source} → {target}"

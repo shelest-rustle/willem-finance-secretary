@@ -43,6 +43,14 @@ credit_sheets:
   "МТС Кредит Ярослава": "МТС Кредит Ярослава"
   "Tinkoff REF Кредит Лики": "Tinkoff REF Кредит Лики"
 
+# Классификация долговых источников (kind="debt") для /balances — по подстроке в
+# названии (без учёта регистра). Источники типа "Кредит" (Т-Кредит Лики и т.п.) не
+# подходят ни под одно из этих слов — по решению Лики такие источники в /balances
+# сейчас не показываются вовсе (график/остаток по ним ведётся в кредитных листах,
+# см. credit_sheets выше).
+debt_wallet_keywords: ["кредитка", "кубышка"]
+debt_obligation_keywords: ["долг"]
+
 currency_options:
   - ["KZT", "KZT"]
   - ["RUB", "RUB"]
@@ -190,6 +198,10 @@ messages:
   sources.currency_updated: "Валюта обновлена: {currency}."
   sources.adjust_prompt: "Текущий остаток: {balance} {symbol}.\nУкажите фактический остаток."
   sources.adjusted: "Остаток скорректирован: {amount} {symbol}.{suffix}"
+  sources.credit_limit_suffix: "\nПредел кредитования: {amount} {symbol}."
+  sources.credit_limit_missing_suffix: "\nПредел кредитования не установлен — определите кнопкой ниже."
+  sources.credit_limit_prompt: "Предел кредитования суммой."
+  sources.credit_limit_updated: "Предел кредитования установлен: {amount} {symbol}."
 
   reports.label_today: "Сегодня"
   reports.label_week: "За неделю"
@@ -199,7 +211,12 @@ messages:
   reports.balances_line: "«{source}»: {amount} {symbol}"
   reports.balances_total_prefix: "Совокупный пульс: "
   reports.debts_header: "Долговые обязательства."
-  reports.debts_total_prefix: "Итого к возмещению: "
+  reports.debt_wallets_header: "Долговые кошельки."
+  reports.debt_wallet_name: "«{name}»"
+  reports.debt_wallet_limit: "Предел кредитования: {amount} {symbol}"
+  reports.debt_wallet_available: "На счету: {amount} {symbol}"
+  reports.debt_wallet_owed: "К оплате: {amount} {symbol}"
+  reports.debt_wallet_no_limit: "Остаток: {amount} {symbol} (предел не установлен — /sources)"
   reports.summary_expense: "Расход: {amount} {symbol} — {category} ({source})"
   reports.summary_income: "Доход: {amount} {symbol} — {source}"
   reports.summary_transfer_same: "Перемещение: {amount} {symbol} {source} → {target}"
