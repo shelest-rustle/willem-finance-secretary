@@ -11,23 +11,25 @@ from willem.config import Config
 logger = logging.getLogger(__name__)
 
 # Layout кредитных листов ("МТС Кредит Лики" и аналоги) — см. MTS_CREDIT_TEST.md.
-# Ёмкость обеих таблиц фиксированная и намеренно не расширяется автоматически (~2 года
-# форы для графика платежей, 30 записей для досрочных взносов) — при исчерпании нужно
-# вручную протянуть формулы вниз в самой таблице.
+# Ёмкость обеих таблиц конечна и намеренно не расширяется автоматически — при
+# исчерпании нужно вручную протянуть формулы вниз в самой таблице. У разных кредитов
+# разный срок, поэтому длина Таблицы 1 РАЗНАЯ у разных листов (например, 24 строки
+# у "МТС Кредит Лики", но 36 у "Tinkoff REF Кредит Лики") — границы обеих таблиц
+# поэтому не хардкодятся, а определяются по самому листу (см. `_table_layout`).
 
-# Таблица 1 «ПЛАТЕЖИ ПО ГРАФИКУ» — обычные ежемесячные платежи.
 SCHEDULE_FIRST_ROW = 8
-SCHEDULE_LAST_ROW = 31
 SCHEDULE_ACTUAL_COL = "D"  # Факт оплаты
 SCHEDULE_OVERPAY_COL = "I"  # Что сделать, если заплатила больше плана
 
-# Таблица 2 «ДОСРОЧНЫЕ ПЛАТЕЖИ И ПЕРЕПЛАТЫ» — плоский лог, дописывается снизу.
-EARLY_FIRST_ROW = 35
-EARLY_LAST_ROW = 64
 EARLY_DATE_COL = "A"
 EARLY_AMOUNT_COL = "B"
 EARLY_ACTION_COL = "C"
 EARLY_COMMENT_COL = "D"
+
+# Ориентиры для определения границ таблиц — те же на всех кредитных листах.
+EARLY_BLOCK_TITLE = "ДОСРОЧНЫЕ ПЛАТЕЖИ И ПЕРЕПЛАТЫ"
+EARLY_TOTAL_LABEL = "Итого"
+_MAX_SCAN_ROW = 300  # с большим запасом — дальше идёт "ГРАФИК БАНКА", он нас не интересует
 
 # Литералы data validation в обеих таблицах — должны совпадать дословно с выпадающими
 # списками в самих листах.
@@ -39,6 +41,11 @@ _client_cache: gspread.Client | None = None
 
 class CreditSheetCapacityError(RuntimeError):
     """В зарезервированном диапазоне не осталось свободных строк — нужно расширять вручную."""
+
+
+class CreditSheetLayoutError(RuntimeError):
+    """Не удалось найти ориентиры структуры листа (заголовок Таблицы 2 / строку "Итого") —
+    похоже, кто-то поменял разметку кредитного листа."""
 
 
 class CreditSyncOutcome(Enum):
@@ -59,7 +66,36 @@ def _get_worksheet(config: Config, sheet_title: str) -> gspread.Worksheet:
     return spreadsheet.worksheet(sheet_title)
 
 
-def _find_regular_payment_row(worksheet: gspread.Worksheet) -> int | None:
+def _table_layout(worksheet: gspread.Worksheet) -> tuple[int, int, int]:
+    """(schedule_last_row, early_first_row, early_last_row) — вычисляются по факту из
+    самого листа: ищем заголовок Таблицы 2 и следующую за её данными строку "Итого".
+    Между последней строкой графика и заголовком Таблицы 2 всегда ровно одна пустая
+    строка, а первая строка данных Таблицы 2 — через одну после заголовка (заголовок
+    блока + строка с названиями колонок) — см. MTS_CREDIT_TEST.md."""
+    column_a = worksheet.get(f"A{SCHEDULE_FIRST_ROW}:A{_MAX_SCAN_ROW}")
+    title_row: int | None = None
+    total_row: int | None = None
+    for offset, row in enumerate(column_a):
+        cell = str(row[0]).strip() if row else ""
+        absolute_row = SCHEDULE_FIRST_ROW + offset
+        if title_row is None and cell == EARLY_BLOCK_TITLE:
+            title_row = absolute_row
+        elif title_row is not None and cell == EARLY_TOTAL_LABEL:
+            total_row = absolute_row
+            break
+    if title_row is None or total_row is None:
+        raise CreditSheetLayoutError(
+            f"Не нашёл на листе «{worksheet.title}» заголовок «{EARLY_BLOCK_TITLE}» "
+            f"и/или строку «{EARLY_TOTAL_LABEL}» после него — структура листа не совпадает "
+            f"с ожидаемой."
+        )
+    schedule_last_row = title_row - 2
+    early_first_row = title_row + 2
+    early_last_row = total_row - 1
+    return schedule_last_row, early_first_row, early_last_row
+
+
+def _find_regular_payment_row(worksheet: gspread.Worksheet, schedule_last_row: int) -> int | None:
     """Первая строка графика, где ещё нет реально внесённого факта оплаты.
 
     "Ещё не оплачено" — это пустая ячейка ИЛИ до сих пор формула (строка-кандидат на
@@ -67,50 +103,50 @@ def _find_regular_payment_row(worksheet: gspread.Worksheet) -> int | None:
     см. MTS_CREDIT_TEST.md, раздел 2).
     """
     formulas = worksheet.get(
-        f"{SCHEDULE_ACTUAL_COL}{SCHEDULE_FIRST_ROW}:{SCHEDULE_ACTUAL_COL}{SCHEDULE_LAST_ROW}",
+        f"{SCHEDULE_ACTUAL_COL}{SCHEDULE_FIRST_ROW}:{SCHEDULE_ACTUAL_COL}{schedule_last_row}",
         value_render_option="FORMULA",
     )
-    for offset in range(SCHEDULE_LAST_ROW - SCHEDULE_FIRST_ROW + 1):
+    for offset in range(schedule_last_row - SCHEDULE_FIRST_ROW + 1):
         cell = str(formulas[offset][0]) if offset < len(formulas) and formulas[offset] else ""
         if cell == "" or cell.startswith("="):
             return SCHEDULE_FIRST_ROW + offset
     return None
 
 
-def _find_early_payment_row(worksheet: gspread.Worksheet) -> int | None:
+def _find_early_payment_row(
+    worksheet: gspread.Worksheet, early_first_row: int, early_last_row: int
+) -> int | None:
     """Первая пустая строка в логе досрочных взносов (по дате взноса, колонка A)."""
-    values = worksheet.get(f"{EARLY_DATE_COL}{EARLY_FIRST_ROW}:{EARLY_DATE_COL}{EARLY_LAST_ROW}")
-    for offset in range(EARLY_LAST_ROW - EARLY_FIRST_ROW + 1):
+    values = worksheet.get(f"{EARLY_DATE_COL}{early_first_row}:{EARLY_DATE_COL}{early_last_row}")
+    for offset in range(early_last_row - early_first_row + 1):
         cell = str(values[offset][0]).strip() if offset < len(values) and values[offset] else ""
         if cell == "":
-            return EARLY_FIRST_ROW + offset
+            return early_first_row + offset
     return None
 
 
-def record_regular_payment(
-    config: Config, sheet_title: str, amount: float, *, reduce_payment: bool
-) -> bool:
+def record_regular_payment(config: Config, sheet_title: str, amount: float) -> bool:
     """Обычный ежемесячный платёж — пишет факт оплаты в первую незаполненную строку
-    графика (и, при необходимости, выбор «Уменьшить платёж»/«Сократить срок»)."""
-    action_label = OVERPAYMENT_REDUCE if reduce_payment else OVERPAYMENT_SHORTEN
+    графика. "Что сделать с переплатой" тут не спрашивается и не трогается — эта
+    развилка имеет смысл только для досрочных взносов (см. запись Таблицы 2), в
+    Таблице 1 остаётся дефолтное "Сократить срок", уже проставленное в самом листе."""
     for attempt in (1, 2):
         try:
             worksheet = _get_worksheet(config, sheet_title)
-            row = _find_regular_payment_row(worksheet)
+            schedule_last_row, _, _ = _table_layout(worksheet)
+            row = _find_regular_payment_row(worksheet, schedule_last_row)
             if row is None:
                 raise CreditSheetCapacityError(
                     f"В графике листа «{sheet_title}» не осталось свободных строк "
-                    f"({SCHEDULE_FIRST_ROW}:{SCHEDULE_LAST_ROW})."
+                    f"({SCHEDULE_FIRST_ROW}:{schedule_last_row})."
                 )
-            worksheet.batch_update(
-                [
-                    {"range": f"{SCHEDULE_ACTUAL_COL}{row}", "values": [[amount]]},
-                    {"range": f"{SCHEDULE_OVERPAY_COL}{row}", "values": [[action_label]]},
-                ],
+            worksheet.update(
+                range_name=f"{SCHEDULE_ACTUAL_COL}{row}",
+                values=[[amount]],
                 value_input_option="USER_ENTERED",
             )
             return True
-        except CreditSheetCapacityError:
+        except (CreditSheetCapacityError, CreditSheetLayoutError):
             raise
         except Exception:
             logger.exception(
@@ -135,11 +171,12 @@ def record_early_payment(
     for attempt in (1, 2):
         try:
             worksheet = _get_worksheet(config, sheet_title)
-            row = _find_early_payment_row(worksheet)
+            _, early_first_row, early_last_row = _table_layout(worksheet)
+            row = _find_early_payment_row(worksheet, early_first_row, early_last_row)
             if row is None:
                 raise CreditSheetCapacityError(
                     f"В логе досрочных взносов листа «{sheet_title}» не осталось "
-                    f"свободных строк ({EARLY_FIRST_ROW}:{EARLY_LAST_ROW})."
+                    f"свободных строк ({early_first_row}:{early_last_row})."
                 )
             worksheet.update(
                 range_name=f"{EARLY_DATE_COL}{row}:{EARLY_COMMENT_COL}{row}",
@@ -147,7 +184,7 @@ def record_early_payment(
                 value_input_option="USER_ENTERED",
             )
             return True
-        except CreditSheetCapacityError:
+        except (CreditSheetCapacityError, CreditSheetLayoutError):
             raise
         except Exception:
             logger.exception(
@@ -181,13 +218,10 @@ async def sync_credit_payment(
                 comment=comment,
             )
         else:
-            success = await asyncio.to_thread(
-                record_regular_payment,
-                config,
-                sheet_title,
-                amount,
-                reduce_payment=reduce_payment,
-            )
+            success = await asyncio.to_thread(record_regular_payment, config, sheet_title, amount)
     except CreditSheetCapacityError:
         return CreditSyncOutcome.CAPACITY_EXHAUSTED
+    except CreditSheetLayoutError:
+        logger.exception("Не удалось определить разметку кредитного листа «%s»", sheet_title)
+        return CreditSyncOutcome.ERROR
     return CreditSyncOutcome.OK if success else CreditSyncOutcome.ERROR

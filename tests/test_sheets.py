@@ -104,6 +104,8 @@ def test_row_for_transaction_household_expense_with_subcategory() -> None:
         "",
         3400.0,
         "KZT",
+        "",
+        "",
         1.0,
         3400.0,
         "Продукты на неделю",
@@ -128,10 +130,14 @@ def test_row_for_transaction_household_debt_payment_label() -> None:
     assert row[6] == "Т-Кредит Лики"
 
 
-def test_row_for_transaction_household_kzt_equivalent_blank_between_two_foreign_currencies() -> None:
+def test_row_for_transaction_household_rate_computed_between_two_foreign_currencies() -> None:
+    """Кросс-курс считается для ЛЮБОЙ пары валют перевода (не только с участием KZT) —
+    просто сумма списания / сумма зачисления. А вот "сумма в KZT" по-прежнему пустая,
+    если ни одна из сторон перевода не в KZT — вывести её неоткуда без справочника."""
     tx = make_tx(
         type="transfer",
         currency="RUB",
+        amount=3400.0,
         category_id=None,
         comment=None,
         target_amount=50.0,
@@ -144,8 +150,105 @@ def test_row_for_transaction_household_kzt_equivalent_blank_between_two_foreign_
         tz_name="Asia/Almaty",
         profile_name="pantalone",
     )
-    assert row[9] == ""  # курс к KZT
-    assert row[10] == ""  # сумма в KZT
+    assert row[11] == 3400.0 / 50.0  # курс: RUB за 1 USD
+    assert row[12] == ""  # сумма в KZT — неоткуда взять
+    # сырые сумма/валюта зачисления пишутся всегда, независимо от курса/KZT-эквивалента.
+    assert row[9] == 50.0  # сумма зачисления
+    assert row[10] == "USD"  # валюта зачисления
+
+
+def test_row_for_transaction_household_cross_currency_transfer_records_both_legs() -> None:
+    """Регрессия: раньше сумма/валюта зачисления никуда не писались — при переводе,
+    например, 25 000 KZT в 4 000 RUB в листе не было видно, сколько реально пришло,
+    а курс вместо реального кросс-курса (6,25) показывал 1,0."""
+    tx = make_tx(
+        type="transfer",
+        currency="KZT",
+        amount=25000.0,
+        category_id=None,
+        comment=None,
+        target_amount=4000.0,
+        target_currency="RUB",
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Общий счёт",
+        target_name="Карта Лики RUB",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[7] == 25000.0  # сумма списания
+    assert row[8] == "KZT"  # валюта списания
+    assert row[9] == 4000.0  # сумма зачисления
+    assert row[10] == "RUB"  # валюта зачисления
+    assert row[11] == 6.25  # курс: KZT за 1 RUB
+    assert row[12] == 25000.0  # сумма в KZT — сторона перевода, которая и так в KZT
+
+
+def test_row_for_transaction_household_cross_currency_transfer_reverse_direction() -> None:
+    """Тот же перевод в обратную сторону (RUB -> KZT) — курс считается той же формулой
+    (списание/зачисление), поэтому получается обратное число, а не то же самое 6,25:
+    это ожидаемо, направление перевода меняет единицы измерения курса."""
+    tx = make_tx(
+        type="transfer",
+        currency="RUB",
+        amount=4000.0,
+        category_id=None,
+        comment=None,
+        target_amount=25000.0,
+        target_currency="KZT",
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Карта Лики RUB",
+        target_name="Общий счёт",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[11] == 4000.0 / 25000.0  # курс: RUB за 1 KZT
+    assert row[12] == 25000.0  # сумма в KZT — целевая сторона перевода
+
+
+def test_row_for_transaction_household_same_currency_transfer_rate_is_one() -> None:
+    tx = make_tx(
+        type="transfer",
+        currency="KZT",
+        amount=5000.0,
+        category_id=None,
+        comment=None,
+        target_amount=5000.0,
+        target_currency="KZT",
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Общий счёт",
+        target_name="Депозит",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[11] == 1.0
+    assert row[12] == 5000.0
+
+
+def test_row_for_transaction_household_transfer_rate_blank_when_target_amount_zero() -> None:
+    """Защита от деления на ноль — маловероятный, но допустимый пользовательский ввод."""
+    tx = make_tx(
+        type="transfer",
+        currency="KZT",
+        amount=5000.0,
+        category_id=None,
+        comment=None,
+        target_amount=0.0,
+        target_currency="RUB",
+    )
+    row = sheets.row_for_transaction(
+        tx,
+        source_name="Общий счёт",
+        target_name="Карта Лики RUB",
+        tz_name="Asia/Almaty",
+        profile_name="pantalone",
+    )
+    assert row[11] == ""
 
 
 class FakeConfig:

@@ -40,14 +40,27 @@ def _get_worksheet(config: Config) -> gspread.Worksheet:
 
 
 def _kzt_equivalent(tx: Transaction) -> tuple[float | None, float | None]:
-    """Курс к KZT и сумма в KZT — только там, где это выводится из уже имеющихся данных:
-    сама операция в KZT, либо перевод, у которого одна из сторон в KZT. Для одиночных
-    операций (expense/income/adjustment) не в KZT и для переводов между двумя не-KZT
-    валютами курс не выводится — колонки остаются пустыми (см. UPGRADE_spec.md, 9.7)."""
+    """Курс и сумма в KZT.
+
+    Для переводов "Курс" — кросс-курс между валютой списания и валютой зачисления,
+    вычисленный прямо из двух сумм самого перевода (Сумма списания / Сумма зачисления,
+    т.е. сколько единиц валюты списания за 1 единицу валюты зачисления) — работает для
+    любой пары валют, без привязки к KZT и без внешних справочников. "Сумма в KZT" —
+    отдельно, и только там, где это выводится из уже имеющихся данных: сама операция
+    в KZT, либо перевод, у которого один из концов в KZT. Для одиночных операций
+    (expense/income/adjustment) не в KZT и для переводов между двумя не-KZT валютами
+    сумма в KZT не выводится — колонка остаётся пустой (см. UPGRADE_spec.md, 9.7)."""
+    if tx.type == "transfer":
+        rate = tx.amount / tx.target_amount if tx.target_amount else None
+        if tx.currency == "KZT":
+            amount_kzt = tx.amount
+        elif tx.target_currency == "KZT":
+            amount_kzt = tx.target_amount
+        else:
+            amount_kzt = None
+        return rate, amount_kzt
     if tx.currency == "KZT":
         return 1.0, tx.amount
-    if tx.type == "transfer" and tx.target_currency == "KZT" and tx.amount:
-        return tx.target_amount / tx.amount, tx.target_amount
     return None, None
 
 
@@ -107,6 +120,8 @@ def _household_row(
         credit,
         tx.amount,
         tx.currency,
+        tx.target_amount if tx.target_amount is not None else "",
+        tx.target_currency or "",
         rate if rate is not None else "",
         amount_kzt if amount_kzt is not None else "",
         tx.comment or "",

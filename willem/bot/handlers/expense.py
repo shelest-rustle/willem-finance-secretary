@@ -201,11 +201,16 @@ async def choose_credit_payment_type(
 ) -> None:
     payment_type = callback.data.removeprefix(f"{CREDIT_TYPE_PREFIX}:")
     await state.update_data(credit_payment_type=payment_type)
-    await state.set_state(ExpenseFlow.choosing_credit_overpayment_action)
-    await callback.message.edit_text(
-        texts.get("expense.choose_credit_overpayment_action"),
-        reply_markup=_credit_overpayment_action_keyboard(),
-    )
+    if payment_type == CREDIT_TYPE_EARLY:
+        # "Что сделать с переплатой" имеет смысл только для досрочного взноса — у
+        # обычного платежа в графике остаётся дефолтное "Сократить срок", не спрашиваем.
+        await state.set_state(ExpenseFlow.choosing_credit_overpayment_action)
+        await callback.message.edit_text(
+            texts.get("expense.choose_credit_overpayment_action"),
+            reply_markup=_credit_overpayment_action_keyboard(),
+        )
+    else:
+        await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
 
 
