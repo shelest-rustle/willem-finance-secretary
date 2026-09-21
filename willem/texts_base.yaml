@@ -57,6 +57,8 @@ categories:
   limit_updated: "Лимит обновлён: {amount} на {period}. 🎯"
   month_spent_suffix: " Потрачено с начала месяца: {amounts}. 📊"
   month_spent_none: " В этом месяце по категории ещё не тратили. 📊"
+  subcategory_spent_line: "«{name}»: {amounts}"
+  subcategory_spent_zero: "0"
 
 sources:
   detail: "«{name}». {type_label} · {currency}.\nБаланс: {amount} {symbol}."
@@ -111,3 +113,19 @@ reports:
   amount_updated: "Сумма обновлена: {amount} {symbol}. ✏️"
   comment_updated: "Комментарий обновлён: «{comment}». 💬"
   category_updated: "Категория обновлена: «{name}». 🗂"
+
+credits:
+  list_title: "Кредиты. 💳"
+  list_line: "«{name}»: следующий платёж {date}, {amount} {symbol}"
+  list_line_none: "«{name}»: график исчерпан"
+  detail: "«{name}».\nСледующий платёж: {date}, {amount} {symbol}.\nУведомления: {status}"
+  detail_none: "«{name}».\nБлижайший платёж не найден — график исчерпан.\nУведомления: {status}"
+  not_found: "Кредит не найден."
+  notify_on: "включены"
+  notify_off: "выключены"
+  notify_toggle_on: "🔔 Включить уведомления"
+  notify_toggle_off: "🔕 Выключить уведомления"
+  notify_toggled_on: "Уведомления включены. 🔔"
+  notify_toggled_off: "Уведомления выключены. 🔕"
+  reminder: "Приближается дата оплаты «{credit}». Нужно внести {amount} {symbol} до {date} включительно. 💳"
+  reminder_due_today: "Сегодня последний день оплаты «{credit}»! Внесите {amount} {symbol} до конца дня. ⏰"

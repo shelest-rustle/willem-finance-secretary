@@ -59,7 +59,13 @@ def _list_keyboard(items: list[Category]) -> InlineKeyboardMarkup:
     )
 
 
-def _detail_text(category: Category, month_spent: list[tuple[str, float]], texts: Texts) -> str:
+def _detail_text(
+    category: Category,
+    month_spent: list[tuple[str, float]],
+    texts: Texts,
+    subcategories: list[Category] | None = None,
+    subcategory_spent: dict[str, list[tuple[str, float]]] | None = None,
+) -> str:
     if category.limit_amount is None:
         text = texts.get("categories.detail_no_limit", name=category.name)
     else:
@@ -73,6 +79,14 @@ def _detail_text(category: Category, month_spent: list[tuple[str, float]], texts
         text += texts.get("categories.month_spent_suffix", amounts=format_currency_totals(month_spent))
     else:
         text += texts.get("categories.month_spent_none")
+
+    for subcategory in subcategories or []:
+        amounts = (subcategory_spent or {}).get(subcategory.id, [])
+        text += "\n" + texts.get(
+            "categories.subcategory_spent_line",
+            name=subcategory.name,
+            amounts=format_currency_totals(amounts) if amounts else texts.get("categories.subcategory_spent_zero"),
+        )
     return text
 
 
@@ -113,9 +127,14 @@ async def view_category(callback: CallbackQuery, config: Config, texts: Texts) -
             return
         start, end = period_bounds("month", config.timezone)
         month_spent = transactions_db.sum_expenses_by_category_grouped(conn, category_id, start, end)
+        subcategories = categories_db.list_categories(conn, category.user_id, parent_id=category.id)
+        subcategory_spent = transactions_db.sum_expenses_by_subcategory_grouped(
+            conn, category_id, start, end
+        )
 
     await callback.message.edit_text(
-        _detail_text(category, month_spent, texts), reply_markup=_detail_keyboard(category_id)
+        _detail_text(category, month_spent, texts, subcategories, subcategory_spent),
+        reply_markup=_detail_keyboard(category_id),
     )
     await callback.answer()
 

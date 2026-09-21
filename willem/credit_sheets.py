@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from enum import Enum
 
 import gspread
 
 from willem.config import Config
+from willem.db import credit_reminders as credit_reminders_db
+from willem.db.connection import connect
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,8 @@ logger = logging.getLogger(__name__)
 # поэтому не хардкодятся, а определяются по самому листу (см. `_table_layout`).
 
 SCHEDULE_FIRST_ROW = 8
+SCHEDULE_DATE_COL = "B"     # Дата платежа
+SCHEDULE_PLANNED_COL = "C"  # План платёж
 SCHEDULE_ACTUAL_COL = "D"  # Факт оплаты
 SCHEDULE_OVERPAY_COL = "I"  # Что сделать, если заплатила больше плана
 
@@ -225,3 +230,70 @@ async def sync_credit_payment(
         logger.exception("Не удалось определить разметку кредитного листа «%s»", sheet_title)
         return CreditSyncOutcome.ERROR
     return CreditSyncOutcome.OK if success else CreditSyncOutcome.ERROR
+
+
+# --- Снимок графика платежей (для напоминаний об оплате, см. willem/credit_reminders.py) ---
+
+_SCHEDULE_DATE_FORMAT = "%d.%m.%Y"
+
+
+def _parse_schedule_date(raw: str) -> str:
+    """Дата в листе — "19.11.2026" (см. MTS_CREDIT_TEST.md). Возвращает ISO YYYY-MM-DD."""
+    try:
+        return datetime.strptime(raw.strip(), _SCHEDULE_DATE_FORMAT).date().isoformat()
+    except ValueError as exc:
+        raise CreditSheetLayoutError(f"Не удалось распознать дату платежа: {raw!r}") from exc
+
+
+def _parse_planned_amount(raw: object) -> float:
+    """План платежа может прийти как число или как отформатированная строка вида
+    "10 837,00 ₽" (неразрывный пробел как разделитель тысяч, запятая как десятичная точка,
+    символ валюты) — см. MTS_CREDIT_TEST.md, раздел 1."""
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw).strip().replace("\xa0", " ")
+    for junk in ("₽", "₸", "$", "€", " "):
+        text = text.replace(junk, "")
+    text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError as exc:
+        raise CreditSheetLayoutError(f"Не удалось распознать план платежа: {raw!r}") from exc
+
+
+def read_credit_schedule(config: Config, sheet_title: str) -> list[tuple[int, str, float]]:
+    """(row_number, payment_date_iso, planned_amount) для всех заполненных строк графика —
+    источник для снимка в БД (`credit_schedule`, см. willem/db/credit_reminders.py). Границы
+    диапазона — те же, что и для обычного платежа (`_table_layout`), без дублирования."""
+    worksheet = _get_worksheet(config, sheet_title)
+    schedule_last_row, _, _ = _table_layout(worksheet)
+    dates = worksheet.get(
+        f"{SCHEDULE_DATE_COL}{SCHEDULE_FIRST_ROW}:{SCHEDULE_DATE_COL}{schedule_last_row}"
+    )
+    amounts = worksheet.get(
+        f"{SCHEDULE_PLANNED_COL}{SCHEDULE_FIRST_ROW}:{SCHEDULE_PLANNED_COL}{schedule_last_row}"
+    )
+    rows: list[tuple[int, str, float]] = []
+    for offset in range(schedule_last_row - SCHEDULE_FIRST_ROW + 1):
+        date_cell = dates[offset][0] if offset < len(dates) and dates[offset] else ""
+        amount_cell = amounts[offset][0] if offset < len(amounts) and amounts[offset] else ""
+        if date_cell == "" or amount_cell == "":
+            continue
+        row_number = SCHEDULE_FIRST_ROW + offset
+        rows.append((row_number, _parse_schedule_date(str(date_cell)), _parse_planned_amount(amount_cell)))
+    return rows
+
+
+async def resync_credit_schedules(config: Config) -> None:
+    """Обновляет снимок графика (`credit_schedule`) для всех кредитов профиля — по одному
+    кредиту за раз; ошибка на одном (например `CreditSheetLayoutError`) логируется и не
+    прерывает обновление остальных. Вызывается ночной cron-задачей (см. willem/scheduler.py)
+    и вручную через `python -m willem.cli resync_credits`."""
+    for credit_key, sheet_title in config.credit_sheets.items():
+        try:
+            rows = await asyncio.to_thread(read_credit_schedule, config, sheet_title)
+        except Exception:
+            logger.exception("Не удалось обновить график платежей для кредита «%s»", credit_key)
+            continue
+        with connect(config.db_path) as conn:
+            credit_reminders_db.replace_schedule(conn, credit_key, rows)

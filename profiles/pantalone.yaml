@@ -48,8 +48,11 @@ credit_sheets:
 # подходят ни под одно из этих слов — по решению Лики такие источники в /balances
 # сейчас не показываются вовсе (график/остаток по ним ведётся в кредитных листах,
 # см. credit_sheets выше).
+# debt_obligation_keywords больше не задан (по просьбе Лики, 2026-09-21) — секция
+# "Долговые обязательства" (личные долги: "Долг Роме", "Долг Артёму") убрана из
+# /balances целиком; сами источники по-прежнему существуют и учитываются в
+# транзакциях/переводах, просто не отображаются в этом отчёте (как installment-кредиты).
 debt_wallet_keywords: ["кредитка", "кубышка"]
-debt_obligation_keywords: ["долг"]
 
 currency_options:
   - ["KZT", "KZT"]
@@ -236,3 +239,18 @@ messages:
   reports.amount_updated: "Сумма пересмотрена: {amount} {symbol}."
   reports.comment_updated: "Комментарий пересмотрен: «{comment}»."
   reports.category_updated: "Статья пересмотрена: «{name}»."
+
+  credits.list_title: "Кредитные обязательства."
+  credits.list_line: "«{name}»: очередной взнос {date}, {amount} {symbol}"
+  credits.list_line_none: "«{name}»: график исчерпан"
+  credits.detail: "«{name}».\nОчередной взнос: {date}, {amount} {symbol}.\nОповещения: {status}"
+  credits.detail_none: "«{name}».\nОчередной взнос не определён — график исчерпан.\nОповещения: {status}"
+  credits.not_found: "Такого обязательства не значится."
+  credits.notify_on: "действуют"
+  credits.notify_off: "приостановлены"
+  credits.notify_toggle_on: "Возобновить оповещения"
+  credits.notify_toggle_off: "Приостановить оповещения"
+  credits.notify_toggled_on: "Оповещения возобновлены."
+  credits.notify_toggled_off: "Оповещения приостановлены."
+  credits.reminder: "Приближается дата оплаты «{credit}». Нужно внести {amount} {symbol} до {date} включительно. Позаботьтесь о том, чтобы на счету списания было достаточно средств."
+  credits.reminder_due_today: "Сегодня — крайний срок оплаты «{credit}». Внесите {amount} {symbol} до конца дня: договор не предусматривает отсрочек."

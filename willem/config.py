@@ -60,6 +60,9 @@ class Config:
     # попадает в этот словарь, включается доп. button-flow (тип платежа / что с
     # переплатой) и запись в соответствующий кредитный лист — см. willem/credit_sheets.py.
     credit_sheets: dict[str, str]
+    # Валюта для форматирования суммы в напоминаниях об оплате кредита (willem/credit_reminders.py) —
+    # отдельного поля в profiles/<profile>.yaml пока не заводили, все текущие кредиты Pantalone в RUB.
+    credit_reminder_currency: str
 
 
 def ledger_user_id(config: Config, telegram_id: int) -> int:
@@ -153,6 +156,7 @@ def load_config() -> Config:
         shared_ledger=bool(profile.get("shared_ledger", False)),
         sheet_name=profile.get("sheet_name", "Транзакции"),
         credit_sheets=dict(profile.get("credit_sheets") or {}),
+        credit_reminder_currency=profile.get("credit_reminder_currency", "RUB"),
         debt_wallet_keywords=tuple(profile.get("debt_wallet_keywords", [])),
         debt_obligation_keywords=tuple(profile.get("debt_obligation_keywords", [])),
     )

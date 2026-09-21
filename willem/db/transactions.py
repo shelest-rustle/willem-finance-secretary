@@ -222,6 +222,28 @@ def sum_expenses_by_category_grouped(
     return [(row["currency"], row["total"]) for row in rows]
 
 
+def sum_expenses_by_subcategory_grouped(
+    conn: sqlite3.Connection,
+    category_id: str,
+    period_start_utc: str,
+    period_end_utc: str,
+) -> dict[str, list[tuple[str, float]]]:
+    """Расход за период по подкатегориям заданной категории верхнего уровня —
+    {subcategory_id: [(валюта, сумма), ...]}. Подкатегория без единой операции за период
+    в результат не попадает — вызывающий код сам подставляет 0 для отсутствующих."""
+    rows = conn.execute(
+        "SELECT subcategory_id, currency, COALESCE(SUM(amount), 0) AS total FROM transactions "
+        "WHERE category_id = ? AND subcategory_id IS NOT NULL AND type = 'expense' AND deleted = 0 "
+        "AND created_at_utc >= ? AND created_at_utc <= ? "
+        "GROUP BY subcategory_id, currency",
+        (category_id, period_start_utc, period_end_utc),
+    ).fetchall()
+    result: dict[str, list[tuple[str, float]]] = {}
+    for row in rows:
+        result.setdefault(row["subcategory_id"], []).append((row["currency"], row["total"]))
+    return result
+
+
 def sum_by_type_and_period(
     conn: sqlite3.Connection, user_id: int, period_start_utc: str, period_end_utc: str
 ) -> list[Transaction]:

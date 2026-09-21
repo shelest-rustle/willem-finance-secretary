@@ -38,3 +38,31 @@ CREATE TABLE IF NOT EXISTS transactions (
     synced            INTEGER NOT NULL DEFAULT 0,
     deleted           INTEGER NOT NULL DEFAULT 0
 );
+
+-- Снепшот графика платежей по кредиту (профиль Pantalone, см. profiles/pantalone.yaml::credit_sheets
+-- и MTS_CREDIT_TEST.md) — периодически обновляется из Google Sheets, см. willem/credit_schedule_sync.py.
+-- Без user_id: кредиты общесемейные (shared_ledger), не привязаны к одному Telegram-пользователю.
+CREATE TABLE IF NOT EXISTS credit_schedule (
+    credit_key      TEXT NOT NULL,   -- ключ profiles.<profile>.yaml::credit_sheets, напр. "Tinkoff REF Кредит Лики"
+    row_number      INTEGER NOT NULL,-- номер строки графика на самом листе (для отладки)
+    payment_date    TEXT NOT NULL,   -- ISO-дата YYYY-MM-DD, колонка "Дата платежа"
+    planned_amount  REAL NOT NULL,   -- колонка "План платёж"
+    PRIMARY KEY (credit_key, row_number)
+);
+
+-- Вкл/выкл напоминаний по конкретному кредиту. Отсутствие строки для credit_key = "включено"
+-- (см. willem/db/credit_reminders.py::is_reminder_enabled).
+CREATE TABLE IF NOT EXISTS credit_reminder_settings (
+    credit_key   TEXT PRIMARY KEY,
+    enabled      INTEGER NOT NULL DEFAULT 1
+);
+
+-- Журнал уже отправленных напоминаний — защита от повторной отправки при повторном
+-- запуске джобы в тот же день (например после рестарта бота).
+CREATE TABLE IF NOT EXISTS credit_reminder_log (
+    credit_key    TEXT NOT NULL,
+    payment_date  TEXT NOT NULL,
+    offset_days   INTEGER NOT NULL,   -- 3 | 2 | 1 | 0
+    sent_at_utc   TEXT NOT NULL,
+    PRIMARY KEY (credit_key, payment_date, offset_days)
+);

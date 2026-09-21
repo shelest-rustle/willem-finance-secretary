@@ -40,6 +40,39 @@ def test_category_detail_text_month_spending_multiple_currencies(texts: Texts) -
     )
 
 
+def test_category_detail_text_with_subcategory_breakdown(texts: Texts) -> None:
+    category = Category(
+        id="c1", user_id=1, name="Домашняя еда", limit_amount=None, limit_period="month",
+        parent_id=None, is_active=True,
+    )
+    subcategories = [
+        Category(id="s1", user_id=1, name="Вкусняшки", limit_amount=None, limit_period="month",
+                  parent_id="c1", is_active=True),
+        Category(id="s2", user_id=1, name="Перекусы", limit_amount=None, limit_period="month",
+                  parent_id="c1", is_active=True),
+        Category(id="s3", user_id=1, name="Продукты", limit_amount=None, limit_period="month",
+                  parent_id="c1", is_active=True),
+    ]
+    subcategory_spent = {"s1": [("KZT", 12400)], "s3": [("KZT", 141893)]}
+    text = category_detail_text(category, [("KZT", 162393)], texts, subcategories, subcategory_spent)
+    assert text == (
+        "«Домашняя еда». Лимит не задан. Потрачено с начала месяца: 162 393 ₸. 📊\n"
+        "«Вкусняшки»: 12 400 ₸\n"
+        "«Перекусы»: 0\n"
+        "«Продукты»: 141 893 ₸"
+    )
+
+
+def test_category_detail_text_without_subcategories_unchanged(texts: Texts) -> None:
+    category = Category(
+        id="c1", user_id=1, name="Прочее", limit_amount=None, limit_period="month",
+        parent_id=None, is_active=True,
+    )
+    assert category_detail_text(category, [], texts, [], {}) == (
+        "«Прочее». Лимит не задан. В этом месяце по категории ещё не тратили. 📊"
+    )
+
+
 class _FakeConfig:
     debt_wallet_keywords: tuple[str, ...] = ()
 

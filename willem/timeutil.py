@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -42,3 +42,11 @@ def format_sheet_datetime(iso_utc: str, tz_name: str) -> str:
 def format_sheet_date(iso_utc: str, tz_name: str) -> str:
     dt = datetime.fromisoformat(iso_utc).astimezone(ZoneInfo(tz_name))
     return dt.strftime("%d.%m.%Y")
+
+
+def today_local_date(tz_name: str) -> date:
+    return datetime.now(timezone.utc).astimezone(ZoneInfo(tz_name)).date()
+
+
+def format_date_ru(value: date) -> str:
+    return value.strftime("%d.%m.%Y")

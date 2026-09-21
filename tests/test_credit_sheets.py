@@ -367,3 +367,96 @@ async def test_sync_credit_payment_routes_early_flag(monkeypatch: pytest.MonkeyP
     )
 
     assert calls == ["early"]
+
+
+# -- снимок графика платежей (напоминания об оплате) --------------------------------
+
+
+def test_parse_schedule_date_parses_ru_format() -> None:
+    assert credit_sheets._parse_schedule_date("19.11.2026") == "2026-11-19"
+
+
+def test_parse_schedule_date_raises_on_unknown_format() -> None:
+    with pytest.raises(CreditSheetLayoutError):
+        credit_sheets._parse_schedule_date("2026-11-19")
+
+
+def test_parse_planned_amount_handles_plain_number() -> None:
+    assert credit_sheets._parse_planned_amount(8558.0) == 8558.0
+
+
+def test_parse_planned_amount_handles_formatted_string_with_currency_symbol() -> None:
+    assert credit_sheets._parse_planned_amount("10 837,00 ₽") == 10837.0
+
+
+def test_parse_planned_amount_handles_non_breaking_space() -> None:
+    assert credit_sheets._parse_planned_amount("10\xa0920,00 ₽") == 10920.0
+
+
+def test_read_credit_schedule_pairs_dates_and_amounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    worksheet = FakeWorksheet(
+        get_responses={
+            f"B{SCHEDULE_FIRST_ROW}:B{SCHEDULE_LAST_ROW}": [["19.09.2026"], ["19.10.2026"]],
+            f"C{SCHEDULE_FIRST_ROW}:C{SCHEDULE_LAST_ROW}": [["8 558,00 ₽"], ["8 558,00 ₽"]],
+        }
+    )
+    monkeypatch.setattr(credit_sheets, "_get_worksheet", lambda config, title: worksheet)
+
+    rows = credit_sheets.read_credit_schedule(FakeConfig(), "МТС Кредит Лики")
+
+    assert rows == [
+        (SCHEDULE_FIRST_ROW, "2026-09-19", 8558.0),
+        (SCHEDULE_FIRST_ROW + 1, "2026-10-19", 8558.0),
+    ]
+
+
+def test_read_credit_schedule_skips_incomplete_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Строки за пределами уже заполненного графика (пустые дата/сумма) не попадают в снимок."""
+    worksheet = FakeWorksheet(
+        get_responses={
+            f"B{SCHEDULE_FIRST_ROW}:B{SCHEDULE_LAST_ROW}": [["19.09.2026"], []],
+            f"C{SCHEDULE_FIRST_ROW}:C{SCHEDULE_LAST_ROW}": [["8 558,00 ₽"], []],
+        }
+    )
+    monkeypatch.setattr(credit_sheets, "_get_worksheet", lambda config, title: worksheet)
+
+    rows = credit_sheets.read_credit_schedule(FakeConfig(), "МТС Кредит Лики")
+
+    assert rows == [(SCHEDULE_FIRST_ROW, "2026-09-19", 8558.0)]
+
+
+async def test_resync_credit_schedules_writes_snapshot_per_credit(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from willem.db import credit_reminders as credit_reminders_db
+    from willem.db.connection import connect, init_db
+
+    class MultiCreditConfig(FakeConfig):
+        db_path = str(tmp_path / "test.db")
+        credit_sheets = {"МТС Кредит Лики": "МТС Кредит Лики", "Сломанный лист": "Сломанный лист"}
+
+    init_db(MultiCreditConfig.db_path)
+
+    good_worksheet = FakeWorksheet(
+        get_responses={
+            f"B{SCHEDULE_FIRST_ROW}:B{SCHEDULE_LAST_ROW}": [["19.09.2026"]],
+            f"C{SCHEDULE_FIRST_ROW}:C{SCHEDULE_LAST_ROW}": [["8 558,00 ₽"]],
+        }
+    )
+
+    def fake_get_worksheet(config, title):
+        if title == "Сломанный лист":
+            raise CreditSheetLayoutError("не найдена разметка")
+        return good_worksheet
+
+    monkeypatch.setattr(credit_sheets, "_get_worksheet", fake_get_worksheet)
+
+    # Ошибка на одном кредите не должна прерывать обновление остальных.
+    await credit_sheets.resync_credit_schedules(MultiCreditConfig())
+
+    with connect(MultiCreditConfig.db_path) as conn:
+        rows = credit_reminders_db.list_schedule(conn, "МТС Кредит Лики")
+        broken_rows = credit_reminders_db.list_schedule(conn, "Сломанный лист")
+
+    assert len(rows) == 1
+    assert broken_rows == []

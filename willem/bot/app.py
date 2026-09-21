@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from willem.bot.handlers import categories, expense, income, reports, sources, start, transfer
+from willem.bot.handlers import categories, credits, expense, income, reports, sources, start, transfer
 from willem.bot.middlewares import AllowedUsersMiddleware
 from willem.config import Config
 from willem.scheduler import create_scheduler
@@ -27,6 +27,7 @@ def create_dispatcher(config: Config) -> Dispatcher:
     dp.include_router(categories.router)
     dp.include_router(sources.router)
     dp.include_router(reports.router)
+    dp.include_router(credits.router)
     return dp
 
 
@@ -34,7 +35,7 @@ async def run_bot(config: Config, texts: Texts) -> None:
     bot = Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = create_dispatcher(config)
 
-    scheduler = create_scheduler(config)
+    scheduler = create_scheduler(config, bot, texts)
     scheduler.start()
 
     logger.info("Запуск polling (профиль: %s)", config.profile_name)

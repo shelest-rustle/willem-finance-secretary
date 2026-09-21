@@ -43,6 +43,7 @@ def make_config(db_path: Path) -> Config:
         credit_sheets={},
         debt_wallet_keywords=(),
         debt_obligation_keywords=(),
+        credit_reminder_currency="RUB",
     )
 
 

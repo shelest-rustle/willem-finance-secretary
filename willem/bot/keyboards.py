@@ -10,6 +10,7 @@ BALANCES_BUTTON = "Баланс"
 TODAY_BUTTON = "Сегодня"
 WEEK_BUTTON = "Неделя"
 LAST_BUTTON = "Последние"
+CREDITS_BUTTON = "Кредиты"
 
 SKIP_LABEL = "Пропустить"
 
@@ -55,7 +56,9 @@ def build_single_button_keyboard(label: str, callback_data: str) -> InlineKeyboa
     return builder.as_markup()
 
 
-def build_main_menu() -> ReplyKeyboardMarkup:
+def build_main_menu(show_credits: bool = False) -> ReplyKeyboardMarkup:
+    """`show_credits` включает кнопку «Кредиты» — только для профилей с настроенными
+    `credit_sheets` (сейчас Pantalone), см. willem/bot/handlers/credits.py."""
     builder = ReplyKeyboardBuilder()
     builder.button(text=TRANSFER_BUTTON)
     builder.button(text=BALANCES_BUTTON)
@@ -64,5 +67,9 @@ def build_main_menu() -> ReplyKeyboardMarkup:
     builder.button(text=TODAY_BUTTON)
     builder.button(text=WEEK_BUTTON)
     builder.button(text=LAST_BUTTON)
-    builder.adjust(2, 2, 2, 1)
+    rows = [2, 2, 2, 1]
+    if show_credits:
+        builder.button(text=CREDITS_BUTTON)
+        rows[-1] = 2
+    builder.adjust(*rows)
     return builder.as_markup(resize_keyboard=True)

@@ -144,6 +144,13 @@ sudo systemctl enable --now willem-bot.service
 docker compose exec willem python -m willem.cli resync
 ```
 
+Для профилей с настроенными `credit_sheets` (сейчас — Pantalone) — обновить снимок графика
+платежей по кредитам вручную, не дожидаясь ночной ресинхронизации (03:30):
+
+```bash
+docker compose exec pantalone python -m willem.cli resync_credits
+```
+
 ## Тесты
 
 56 тестов (`poetry run pytest -q`), покрывают "чистую" бизнес-логику (запись операций, лимиты,
