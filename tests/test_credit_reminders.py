@@ -50,30 +50,39 @@ def _row(payment_date: date, amount: float = 10920.0, credit_key: str = "Tinkoff
 
 def test_due_reminders_fires_on_each_offset_boundary() -> None:
     schedule = [_row(date(2026, 11, 19))]  # today + 3
-    due = due_reminders(schedule, already_sent=set(), today=TODAY)
+    due = due_reminders(schedule, already_sent=set(), acknowledged=set(), today=TODAY)
     assert due == [(schedule[0], 3)]
 
 
 def test_due_reminders_skips_dates_outside_offsets() -> None:
     schedule = [_row(date(2026, 11, 25))]  # today + 9 — не входит в (3, 2, 1, 0)
-    assert due_reminders(schedule, already_sent=set(), today=TODAY) == []
+    assert due_reminders(schedule, already_sent=set(), acknowledged=set(), today=TODAY) == []
 
 
 def test_due_reminders_skips_already_sent() -> None:
     schedule = [_row(date(2026, 11, 19))]
     already_sent = {("2026-11-19", 3)}
-    assert due_reminders(schedule, already_sent, today=TODAY) == []
+    assert due_reminders(schedule, already_sent, acknowledged=set(), today=TODAY) == []
+
+
+def test_due_reminders_skips_acknowledged_payment() -> None:
+    """Кнопка "Уже оплачено" гасит ВСЕ оставшиеся офсеты для этой даты, не только текущий."""
+    schedule = [_row(date(2026, 11, 17))]  # today + 1
+    acknowledged = {"2026-11-17"}
+    assert due_reminders(schedule, already_sent=set(), acknowledged=acknowledged, today=TODAY) == []
 
 
 def test_due_reminders_fires_on_payment_day_itself() -> None:
     schedule = [_row(date(2026, 11, 16))]  # offset 0
-    assert due_reminders(schedule, already_sent=set(), today=TODAY) == [(schedule[0], 0)]
+    assert due_reminders(schedule, already_sent=set(), acknowledged=set(), today=TODAY) == [
+        (schedule[0], 0)
+    ]
 
 
 def test_due_reminders_handles_multiple_rows_independently() -> None:
     due_row = _row(date(2026, 11, 18))  # offset 2
     far_row = _row(date(2026, 12, 1))
-    due = due_reminders([due_row, far_row], already_sent=set(), today=TODAY)
+    due = due_reminders([due_row, far_row], already_sent=set(), acknowledged=set(), today=TODAY)
     assert due == [(due_row, 2)]
 
 
@@ -81,7 +90,7 @@ class _FakeBot:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
 
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_message(self, chat_id: int, text: str, reply_markup=None) -> None:
         self.sent.append((chat_id, text))
 
 
@@ -121,6 +130,27 @@ async def test_send_due_reminders_skips_disabled_credit(
             conn, "Tinkoff REF Кредит Лики", [(8, "2026-11-19", 10920.0)]
         )
         credit_reminders_db.set_reminder_enabled(conn, "Tinkoff REF Кредит Лики", False)
+
+    bot = _FakeBot()
+    await send_due_reminders_at(bot, config, texts, today=date(2026, 11, 16))
+
+    assert bot.sent == []
+
+
+async def test_send_due_reminders_skips_acknowledged_payment(
+    tmp_path: Path, texts: Texts
+) -> None:
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+    config = make_config(db_path)
+
+    with connect(str(db_path)) as conn:
+        credit_reminders_db.replace_schedule(
+            conn, "Tinkoff REF Кредит Лики", [(8, "2026-11-19", 10920.0)]
+        )
+        credit_reminders_db.ack_payment(
+            conn, "Tinkoff REF Кредит Лики", date(2026, 11, 19), "2026-11-13T00:00:00+00:00"
+        )
 
     bot = _FakeBot()
     await send_due_reminders_at(bot, config, texts, today=date(2026, 11, 16))

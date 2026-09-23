@@ -83,3 +83,34 @@ def test_mark_sent_and_already_sent(tmp_path: Path) -> None:
             conn, "МТС Кредит Лики", date(2026, 11, 19), 3, "2026-11-16T00:00:00+00:00"
         )
         assert credit_reminders_db.already_sent(conn, "МТС Кредит Лики") == {("2026-11-19", 3)}
+
+
+def test_ack_payment_and_acknowledged_payment_dates(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+
+    with connect(str(db_path)) as conn:
+        assert credit_reminders_db.acknowledged_payment_dates(conn, "МТС Кредит Лики") == set()
+        credit_reminders_db.ack_payment(
+            conn, "МТС Кредит Лики", date(2026, 11, 19), "2026-11-17T00:00:00+00:00"
+        )
+        assert credit_reminders_db.acknowledged_payment_dates(conn, "МТС Кредит Лики") == {
+            "2026-11-19"
+        }
+
+
+def test_ack_payment_is_idempotent(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+
+    with connect(str(db_path)) as conn:
+        credit_reminders_db.ack_payment(
+            conn, "МТС Кредит Лики", date(2026, 11, 19), "2026-11-17T00:00:00+00:00"
+        )
+        # Повторный тап по кнопке не должен упасть на PRIMARY KEY(credit_key, payment_date).
+        credit_reminders_db.ack_payment(
+            conn, "МТС Кредит Лики", date(2026, 11, 19), "2026-11-18T00:00:00+00:00"
+        )
+        assert credit_reminders_db.acknowledged_payment_dates(conn, "МТС Кредит Лики") == {
+            "2026-11-19"
+        }

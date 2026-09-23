@@ -4,6 +4,7 @@ import logging
 from datetime import date
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from willem.config import Config
 from willem.db import credit_reminders as credit_reminders_db
@@ -17,21 +18,33 @@ logger = logging.getLogger(__name__)
 
 OFFSETS = (3, 2, 1, 0)
 
+# Кнопка "Уже оплачено" под напоминанием — callback_data кодирует индекс кредита в
+# config.credit_sheets (см. willem/bot/handlers/credits.py, тот же приём, что и у
+# VIEW_PREFIX/TOGGLE_PREFIX там же) и дату платежа, чтобы гасить оставшиеся офсеты.
+ACK_CALLBACK_PREFIX = "credit_ack"
+
 
 def due_reminders(
     schedule: list[CreditScheduleRow],
     already_sent: set[tuple[str, int]],
+    acknowledged: set[str],
     today: date,
 ) -> list[tuple[CreditScheduleRow, int]]:
     """Какие (строка графика, offset_days) должны получить напоминание прямо сейчас —
-    payment_date - offset_days == today и ещё не отправлялось. Чистая функция без IO —
-    сеть/БД/бот подставляются вызывающим кодом (`send_due_reminders`), поэтому легко
-    тестируется напрямую."""
+    payment_date - offset_days == today, платёж ещё не отмечен оплаченным (`acknowledged`,
+    см. кнопку "Уже оплачено") и напоминание по этому офсету ещё не отправлялось
+    (`already_sent`). Чистая функция без IO — сеть/БД/бот подставляются вызывающим кодом
+    (`send_due_reminders`), поэтому легко тестируется напрямую."""
     due: list[tuple[CreditScheduleRow, int]] = []
     for row in schedule:
         offset = (row.payment_date - today).days
-        if offset in OFFSETS and (row.payment_date.isoformat(), offset) not in already_sent:
-            due.append((row, offset))
+        if offset not in OFFSETS:
+            continue
+        if row.payment_date.isoformat() in acknowledged:
+            continue
+        if (row.payment_date.isoformat(), offset) in already_sent:
+            continue
+        due.append((row, offset))
     return due
 
 
@@ -46,23 +59,38 @@ def _reminder_text(row: CreditScheduleRow, offset: int, config: Config, texts: T
     )
 
 
+def _ack_keyboard(credit_idx: int, payment_date: date, texts: Texts) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text=texts.get("credits.mark_paid_button"),
+                callback_data=f"{ACK_CALLBACK_PREFIX}:{credit_idx}:{payment_date.isoformat()}",
+            )
+        ]]
+    )
+
+
 async def send_due_reminders(bot: Bot, config: Config, texts: Texts) -> None:
     """Для каждого кредита с включёнными уведомлениями — рассылает всем участникам профиля
-    (`config.allowed_telegram_ids`) напоминания, чей срок наступил (см. `due_reminders`), и
+    (`config.allowed_telegram_ids`) напоминания, чей срок наступил (см. `due_reminders`), с
+    кнопкой "Уже оплачено" под каждым (обработка тапа — willem/bot/handlers/credits.py), и
     отмечает их отправленными, чтобы не продублировать при повторном запуске джобы."""
     today = today_local_date(config.timezone)
-    for credit_key in config.credit_sheets:
+    credit_keys = list(config.credit_sheets.keys())
+    for credit_idx, credit_key in enumerate(credit_keys):
         with connect(config.db_path) as conn:
             if not credit_reminders_db.is_reminder_enabled(conn, credit_key):
                 continue
             schedule = credit_reminders_db.list_schedule(conn, credit_key)
             sent = credit_reminders_db.already_sent(conn, credit_key)
+            acked = credit_reminders_db.acknowledged_payment_dates(conn, credit_key)
 
-        for row, offset in due_reminders(schedule, sent, today):
+        for row, offset in due_reminders(schedule, sent, acked, today):
             text = _reminder_text(row, offset, config, texts)
+            keyboard = _ack_keyboard(credit_idx, row.payment_date, texts)
             for telegram_id in config.allowed_telegram_ids:
                 try:
-                    await bot.send_message(telegram_id, text)
+                    await bot.send_message(telegram_id, text, reply_markup=keyboard)
                 except Exception:
                     logger.exception(
                         "Не удалось отправить напоминание по кредиту «%s» пользователю %s",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from aiogram import F, Router
 from aiogram.filters import Command, or_f
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
@@ -7,12 +9,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from willem.bot.keyboards import CREDITS_BUTTON
 from willem.config import Config
+from willem.credit_reminders import ACK_CALLBACK_PREFIX
 from willem.db import credit_reminders as credit_reminders_db
 from willem.db.connection import connect
 from willem.db.credit_reminders import CreditScheduleRow
 from willem.formatting import currency_symbol, format_amount
 from willem.texts import Texts
-from willem.timeutil import format_date_ru, today_local_date
+from willem.timeutil import format_date_ru, now_utc_iso, today_local_date
 
 router = Router(name="credits")
 
@@ -127,3 +130,24 @@ async def toggle_credit(callback: CallbackQuery, config: Config, texts: Texts) -
     )
     text, still_enabled = _detail_text(credit_key, config, texts)
     await callback.message.edit_text(text, reply_markup=_detail_keyboard(idx, still_enabled, texts))
+
+
+@router.callback_query(F.data.startswith(f"{ACK_CALLBACK_PREFIX}:"))
+async def ack_payment(callback: CallbackQuery, config: Config, texts: Texts) -> None:
+    """Кнопка "Уже оплачено" под напоминанием — гасит оставшиеся офсеты для этой даты
+    (см. willem/credit_reminders.py::due_reminders), ничего не пишет в Google Sheets."""
+    idx_str, _, payment_date_str = callback.data.removeprefix(f"{ACK_CALLBACK_PREFIX}:").partition(":")
+    credit_keys = _credit_keys(config)
+    idx = int(idx_str)
+    if idx >= len(credit_keys):
+        await callback.answer(texts.get("credits.not_found"))
+        return
+    credit_key = credit_keys[idx]
+    with connect(config.db_path) as conn:
+        credit_reminders_db.ack_payment(
+            conn, credit_key, date.fromisoformat(payment_date_str), now_utc_iso()
+        )
+    await callback.answer(texts.get("credits.marked_paid"))
+    await callback.message.edit_text(
+        f"{callback.message.text}\n\n{texts.get('credits.marked_paid_suffix')}", reply_markup=None
+    )

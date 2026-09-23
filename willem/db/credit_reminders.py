@@ -86,3 +86,23 @@ def mark_sent(
         "VALUES (?, ?, ?, ?)",
         (credit_key, payment_date.isoformat(), offset_days, sent_at_utc),
     )
+
+
+def acknowledged_payment_dates(conn: sqlite3.Connection, credit_key: str) -> set[str]:
+    """{payment_date_iso, ...} — платежи, отмеченные оплаченными по кнопке под напоминанием
+    (см. `ack_payment`). Используется, чтобы погасить оставшиеся офсеты для этой даты."""
+    rows = conn.execute(
+        "SELECT payment_date FROM credit_payment_ack WHERE credit_key = ?", (credit_key,)
+    ).fetchall()
+    return {row["payment_date"] for row in rows}
+
+
+def ack_payment(
+    conn: sqlite3.Connection, credit_key: str, payment_date: date, acked_at_utc: str
+) -> None:
+    """Идемпотентно — повторный тап на кнопку не ломается о PRIMARY KEY."""
+    conn.execute(
+        "INSERT INTO credit_payment_ack (credit_key, payment_date, acked_at_utc) VALUES (?, ?, ?) "
+        "ON CONFLICT(credit_key, payment_date) DO NOTHING",
+        (credit_key, payment_date.isoformat(), acked_at_utc),
+    )

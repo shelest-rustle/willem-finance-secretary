@@ -66,3 +66,14 @@ CREATE TABLE IF NOT EXISTS credit_reminder_log (
     sent_at_utc   TEXT NOT NULL,
     PRIMARY KEY (credit_key, payment_date, offset_days)
 );
+
+-- Платёж отмечен оплаченным по кнопке "Уже оплачено" под напоминанием — подавляет
+-- оставшиеся офсеты (2/1/0 дня) для этой даты, чтобы бот не спамил после того, как
+-- платёж уже внесён. Не пишет ничего в Google Sheets — только гасит напоминания в БД,
+-- см. willem/credit_reminders.py::due_reminders.
+CREATE TABLE IF NOT EXISTS credit_payment_ack (
+    credit_key    TEXT NOT NULL,
+    payment_date  TEXT NOT NULL,
+    acked_at_utc  TEXT NOT NULL,
+    PRIMARY KEY (credit_key, payment_date)
+);

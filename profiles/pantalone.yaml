@@ -254,3 +254,6 @@ messages:
   credits.notify_toggled_off: "Оповещения приостановлены."
   credits.reminder: "Приближается дата оплаты «{credit}». Нужно внести {amount} {symbol} до {date} включительно. Позаботьтесь о том, чтобы на счету списания было достаточно средств."
   credits.reminder_due_today: "Сегодня — крайний срок оплаты «{credit}». Внесите {amount} {symbol} до конца дня: договор не предусматривает отсрочек."
+  credits.mark_paid_button: "Оплата произведена"
+  credits.marked_paid: "Зафиксировано."
+  credits.marked_paid_suffix: "Отмечено как оплаченное. Дальнейшие напоминания по этому взносу не последуют."

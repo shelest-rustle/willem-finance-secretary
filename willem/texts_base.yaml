@@ -129,3 +129,6 @@ credits:
   notify_toggled_off: "Уведомления выключены. 🔕"
   reminder: "Приближается дата оплаты «{credit}». Нужно внести {amount} {symbol} до {date} включительно. 💳"
   reminder_due_today: "Сегодня последний день оплаты «{credit}»! Внесите {amount} {symbol} до конца дня. ⏰"
+  mark_paid_button: "✅ Уже оплачено"
+  marked_paid: "Отмечено оплаченным. 🔔"
+  marked_paid_suffix: "✅ Отмечено оплаченным вручную — дальнейшие напоминания по этому платежу не придут."
