@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import (
     CATEGORIES_BUTTON,
+    add_back_button,
     build_choice_keyboard,
     build_manage_list_keyboard,
     build_single_button_keyboard,
@@ -35,6 +36,7 @@ NO_LIMIT_CB = "cat_no_limit"
 PERIOD_PREFIX = "cat_period"
 EDIT_NO_LIMIT_CB = "cat_edit_no_limit"
 EDIT_PERIOD_PREFIX = "cat_edit_period"
+STEP_BACK_CB = "cat_step_back"
 
 PERIOD_OPTIONS = [("month", "Месяц"), ("week", "Неделя")]
 
@@ -118,7 +120,10 @@ async def back_to_list(
 
 
 @router.callback_query(F.data.startswith(f"{VIEW_PREFIX}:"))
-async def view_category(callback: CallbackQuery, config: Config, texts: Texts) -> None:
+async def view_category(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    await state.clear()
     category_id = callback.data.removeprefix(f"{VIEW_PREFIX}:")
     with connect(config.db_path) as conn:
         category = categories_db.get_category(conn, category_id)
@@ -144,25 +149,43 @@ async def view_category(callback: CallbackQuery, config: Config, texts: Texts) -
 
 @router.callback_query(F.data == ADD_CB)
 async def start_add(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
-    await state.set_state(CategoryFlow.adding_name)
-    await callback.message.edit_text(texts.get("categories.enter_name"))
+    await _show_add_name(callback.message, state, texts)
     await callback.answer()
+
+
+async def _show_add_name(message: Message, state: FSMContext, texts: Texts) -> None:
+    await state.set_state(CategoryFlow.adding_name)
+    await message.edit_text(
+        texts.get("categories.enter_name"), reply_markup=add_back_button(None, BACK_CB)
+    )
+
+
+def _limit_amount_keyboard(no_limit_callback: str) -> InlineKeyboardMarkup:
+    keyboard = build_single_button_keyboard("Без лимита", no_limit_callback)
+    return add_back_button(keyboard, STEP_BACK_CB)
+
+
+def _period_keyboard(callback_prefix: str) -> InlineKeyboardMarkup:
+    keyboard = build_choice_keyboard(PERIOD_OPTIONS, callback_prefix=callback_prefix)
+    return add_back_button(keyboard, STEP_BACK_CB)
 
 
 @router.message(CategoryFlow.adding_name, F.text)
 async def add_name(message: Message, state: FSMContext, texts: Texts) -> None:
     await state.update_data(name=message.text)
     await state.set_state(CategoryFlow.adding_limit_amount)
-    keyboard = build_single_button_keyboard("Без лимита", NO_LIMIT_CB)
-    await message.answer(texts.get("categories.enter_limit_amount"), reply_markup=keyboard)
+    await message.answer(
+        texts.get("categories.enter_limit_amount"), reply_markup=_limit_amount_keyboard(NO_LIMIT_CB)
+    )
 
 
 @router.message(CategoryFlow.adding_limit_amount, F.text.regexp(EXPENSE_AMOUNT_RE))
 async def add_limit_amount(message: Message, state: FSMContext, texts: Texts) -> None:
     await state.update_data(limit_amount=parse_amount(message.text))
     await state.set_state(CategoryFlow.adding_limit_period)
-    keyboard = build_choice_keyboard(PERIOD_OPTIONS, callback_prefix=PERIOD_PREFIX)
-    await message.answer(texts.get("common.choose_limit_period"), reply_markup=keyboard)
+    await message.answer(
+        texts.get("common.choose_limit_period"), reply_markup=_period_keyboard(PERIOD_PREFIX)
+    )
 
 
 @router.callback_query(CategoryFlow.adding_limit_amount, F.data == NO_LIMIT_CB)
@@ -204,7 +227,10 @@ async def start_rename(callback: CallbackQuery, state: FSMContext, texts: Texts)
     category_id = callback.data.removeprefix(f"{RENAME_PREFIX}:")
     await state.update_data(category_id=category_id)
     await state.set_state(CategoryFlow.renaming)
-    await callback.message.edit_text(texts.get("common.enter_new_name"))
+    await callback.message.edit_text(
+        texts.get("common.enter_new_name"),
+        reply_markup=add_back_button(None, f"{VIEW_PREFIX}:{category_id}"),
+    )
     await callback.answer()
 
 
@@ -224,18 +250,27 @@ async def finish_rename(message: Message, state: FSMContext, config: Config, tex
 async def start_setlimit(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
     category_id = callback.data.removeprefix(f"{SETLIMIT_PREFIX}:")
     await state.update_data(category_id=category_id)
+    await _show_edit_limit_amount(callback.message, state, texts, category_id)
+    await callback.answer()
+
+
+async def _show_edit_limit_amount(
+    message: Message, state: FSMContext, texts: Texts, category_id: str
+) -> None:
     await state.set_state(CategoryFlow.editing_limit_amount)
     keyboard = build_single_button_keyboard("Без лимита", EDIT_NO_LIMIT_CB)
-    await callback.message.edit_text(texts.get("categories.edit_limit_prompt"), reply_markup=keyboard)
-    await callback.answer()
+    # Первый шаг правки лимита — «Назад» ведёт в карточку категории.
+    keyboard = add_back_button(keyboard, f"{VIEW_PREFIX}:{category_id}")
+    await message.edit_text(texts.get("categories.edit_limit_prompt"), reply_markup=keyboard)
 
 
 @router.message(CategoryFlow.editing_limit_amount, F.text.regexp(EXPENSE_AMOUNT_RE))
 async def edit_limit_amount(message: Message, state: FSMContext, texts: Texts) -> None:
     await state.update_data(limit_amount=parse_amount(message.text))
     await state.set_state(CategoryFlow.editing_limit_period)
-    keyboard = build_choice_keyboard(PERIOD_OPTIONS, callback_prefix=EDIT_PERIOD_PREFIX)
-    await message.answer(texts.get("common.choose_limit_period"), reply_markup=keyboard)
+    await message.answer(
+        texts.get("common.choose_limit_period"), reply_markup=_period_keyboard(EDIT_PERIOD_PREFIX)
+    )
 
 
 @router.callback_query(CategoryFlow.editing_limit_amount, F.data == EDIT_NO_LIMIT_CB)
@@ -270,6 +305,31 @@ async def edit_limit_period(
             period=period_word(period),
         )
     )
+    await callback.answer()
+
+
+# --- «Назад» внутри многошаговых правок ---
+
+
+@router.callback_query(CategoryFlow.adding_limit_amount, F.data == STEP_BACK_CB)
+async def back_to_add_name(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await _show_add_name(callback.message, state, texts)
+    await callback.answer()
+
+
+@router.callback_query(CategoryFlow.adding_limit_period, F.data == STEP_BACK_CB)
+async def back_to_add_limit_amount(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await state.set_state(CategoryFlow.adding_limit_amount)
+    await callback.message.edit_text(
+        texts.get("categories.enter_limit_amount"), reply_markup=_limit_amount_keyboard(NO_LIMIT_CB)
+    )
+    await callback.answer()
+
+
+@router.callback_query(CategoryFlow.editing_limit_period, F.data == STEP_BACK_CB)
+async def back_to_edit_limit_amount(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    data = await state.get_data()
+    await _show_edit_limit_amount(callback.message, state, texts, data["category_id"])
     await callback.answer()
 
 

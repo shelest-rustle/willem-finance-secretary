@@ -8,7 +8,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
-from willem.bot.keyboards import SOURCES_BUTTON, build_choice_keyboard, build_manage_list_keyboard
+from willem.bot.keyboards import (
+    SOURCES_BUTTON,
+    add_back_button,
+    build_choice_keyboard,
+    build_manage_list_keyboard,
+)
 from willem.config import Config, ledger_user_id
 from willem.db import sources as sources_db
 from willem.db.connection import connect
@@ -31,6 +36,7 @@ ADJUST_PREFIX = "src_adjust"
 CREDIT_LIMIT_EDIT_PREFIX = "src_limit_edit"
 ARCHIVE_PREFIX = "src_archive"
 BACK_CB = "src_back"
+STEP_BACK_CB = "src_step_back"
 
 
 class SourceFlow(StatesGroup):
@@ -116,7 +122,10 @@ async def back_to_list(
 
 
 @router.callback_query(F.data.startswith(f"{VIEW_PREFIX}:"))
-async def view_source(callback: CallbackQuery, config: Config, texts: Texts) -> None:
+async def view_source(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    await state.clear()
     source_id = callback.data.removeprefix(f"{VIEW_PREFIX}:")
     with connect(config.db_path) as conn:
         source = sources_db.get_source(conn, source_id)
@@ -137,19 +146,34 @@ async def view_source(callback: CallbackQuery, config: Config, texts: Texts) -> 
 
 @router.callback_query(F.data == ADD_CB)
 async def start_add(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
-    await state.set_state(SourceFlow.adding_name)
-    await callback.message.edit_text(texts.get("sources.enter_name"))
+    await _show_add_name(callback.message, state, texts)
     await callback.answer()
+
+
+async def _show_add_name(message: Message, state: FSMContext, texts: Texts) -> None:
+    await state.set_state(SourceFlow.adding_name)
+    await message.edit_text(
+        texts.get("sources.enter_name"), reply_markup=add_back_button(None, BACK_CB)
+    )
+
+
+def _type_keyboard(config: Config) -> InlineKeyboardMarkup:
+    keyboard = build_choice_keyboard(
+        list(config.type_options), callback_prefix=ADD_TYPE_PREFIX, columns=3
+    )
+    return add_back_button(keyboard, STEP_BACK_CB)
+
+
+def _detail_back_keyboard(source_id: str) -> InlineKeyboardMarkup:
+    """«Назад» из одношаговой правки источника — в его карточку."""
+    return add_back_button(None, f"{VIEW_PREFIX}:{source_id}")
 
 
 @router.message(SourceFlow.adding_name, F.text)
 async def add_name(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.update_data(name=message.text)
     await state.set_state(SourceFlow.adding_type)
-    keyboard = build_choice_keyboard(
-        list(config.type_options), callback_prefix=ADD_TYPE_PREFIX, columns=3
-    )
-    await message.answer(texts.get("sources.choose_type"), reply_markup=keyboard)
+    await message.answer(texts.get("sources.choose_type"), reply_markup=_type_keyboard(config))
 
 
 @router.callback_query(SourceFlow.adding_type, F.data.startswith(f"{ADD_TYPE_PREFIX}:"))
@@ -160,7 +184,9 @@ async def add_type(callback: CallbackQuery, state: FSMContext, config: Config, t
     keyboard = build_choice_keyboard(
         list(config.currency_options), callback_prefix=ADD_CURRENCY_PREFIX, columns=4
     )
-    await callback.message.edit_text(texts.get("common.choose_currency"), reply_markup=keyboard)
+    await callback.message.edit_text(
+        texts.get("common.choose_currency"), reply_markup=add_back_button(keyboard, STEP_BACK_CB)
+    )
     await callback.answer()
 
 
@@ -193,7 +219,9 @@ async def start_rename(callback: CallbackQuery, state: FSMContext, texts: Texts)
     source_id = callback.data.removeprefix(f"{RENAME_PREFIX}:")
     await state.update_data(source_id=source_id)
     await state.set_state(SourceFlow.renaming)
-    await callback.message.edit_text(texts.get("common.enter_new_name"))
+    await callback.message.edit_text(
+        texts.get("common.enter_new_name"), reply_markup=_detail_back_keyboard(source_id)
+    )
     await callback.answer()
 
 
@@ -219,7 +247,10 @@ async def start_edit_currency(
     keyboard = build_choice_keyboard(
         list(config.currency_options), callback_prefix=CURRENCY_SET_PREFIX, columns=4
     )
-    await callback.message.edit_text(texts.get("sources.edit_currency_prompt"), reply_markup=keyboard)
+    await callback.message.edit_text(
+        texts.get("sources.edit_currency_prompt"),
+        reply_markup=add_back_button(keyboard, f"{VIEW_PREFIX}:{source_id}"),
+    )
     await callback.answer()
 
 
@@ -246,7 +277,9 @@ async def start_edit_credit_limit(
     source_id = callback.data.removeprefix(f"{CREDIT_LIMIT_EDIT_PREFIX}:")
     await state.update_data(source_id=source_id)
     await state.set_state(SourceFlow.editing_credit_limit)
-    await callback.message.edit_text(texts.get("sources.credit_limit_prompt"))
+    await callback.message.edit_text(
+        texts.get("sources.credit_limit_prompt"), reply_markup=_detail_back_keyboard(source_id)
+    )
     await callback.answer()
 
 
@@ -282,7 +315,8 @@ async def start_adjust(
     await state.set_state(SourceFlow.adjusting_balance)
     symbol = currency_symbol(source.currency)
     await callback.message.edit_text(
-        texts.get("sources.adjust_prompt", balance=format_amount(balance), symbol=symbol)
+        texts.get("sources.adjust_prompt", balance=format_amount(balance), symbol=symbol),
+        reply_markup=_detail_back_keyboard(source_id),
     )
     await callback.answer()
 
@@ -318,6 +352,22 @@ async def finish_adjust(message: Message, state: FSMContext, config: Config, tex
     await message.answer(
         texts.get("sources.adjusted", amount=format_amount(new_balance), symbol=symbol, suffix=suffix)
     )
+
+
+# --- «Назад» внутри добавления источника ---
+
+
+@router.callback_query(SourceFlow.adding_type, F.data == STEP_BACK_CB)
+async def back_to_add_name(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await _show_add_name(callback.message, state, texts)
+    await callback.answer()
+
+
+@router.callback_query(SourceFlow.adding_currency, F.data == STEP_BACK_CB)
+async def back_to_add_type(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    await state.set_state(SourceFlow.adding_type)
+    await callback.message.edit_text(texts.get("sources.choose_type"), reply_markup=_type_keyboard(config))
+    await callback.answer()
 
 
 # --- Архивация ---

@@ -7,7 +7,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import INCOME_AMOUNT_RE, parse_amount
-from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
+from willem.bot.keyboards import (
+    CANCEL_LABEL,
+    SKIP_LABEL,
+    add_back_button,
+    build_choice_keyboard,
+    build_single_button_keyboard,
+)
 from willem.config import FAMILY_WHO, Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
@@ -25,6 +31,8 @@ SUBCATEGORY_PREFIX = "inc_subcat"
 SKIP_SUBCATEGORY_CB = "inc_subcat_skip"
 SKIP_COMMENT_CB = "inc_comment_skip"
 WHO_TOGGLE_CB = "inc_who_toggle"
+BACK_CB = "inc_back"
+CANCEL_CB = "inc_cancel"
 
 
 class IncomeFlow(StatesGroup):
@@ -41,33 +49,66 @@ def _subcategory_keyboard(
     if auto_name:
         label = FAMILY_WHO if current_who == FAMILY_WHO else auto_name
         extra.append((label, WHO_TOGGLE_CB))
-    return build_choice_keyboard(
+    keyboard = build_choice_keyboard(
         [(c.id, c.name) for c in subcategories],
         callback_prefix=SUBCATEGORY_PREFIX,
         extra_buttons=extra,
     )
+    return add_back_button(keyboard, BACK_CB)
+
+
+def _source_keyboard(config: Config, user_id: int) -> InlineKeyboardMarkup | None:
+    with connect(config.db_path) as conn:
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, user_id))
+    if not active_sources:
+        return None
+    keyboard = build_choice_keyboard(
+        [(s.id, s.name) for s in active_sources], callback_prefix=SOURCE_PREFIX
+    )
+    # Первый шаг: до него была сумма, набранная сообщением, — шагать назад некуда, только отмена.
+    return add_back_button(keyboard, CANCEL_CB, label=CANCEL_LABEL)
 
 
 def _find_auto_category(categories: list[Category], name: str) -> Category | None:
     return next((c for c in categories if c.name == name), None)
 
 
+def _auto_subcategories(config: Config, user_id: int) -> tuple[Category | None, list[Category]]:
+    """Авто-категория дохода из профиля (`auto_category.income`) и её активные подкатегории."""
+    auto_category_name = config.auto_category.get("income")
+    if not auto_category_name:
+        return None, []
+    with connect(config.db_path) as conn:
+        top_level = categories_db.list_categories(conn, ledger_user_id(config, user_id))
+        category = _find_auto_category(top_level, auto_category_name)
+        subcategories = (
+            categories_db.list_categories(
+                conn, ledger_user_id(config, user_id), parent_id=category.id
+            )
+            if category
+            else []
+        )
+    return category, subcategories
+
+
 @router.message(StateFilter(None), F.text.regexp(INCOME_AMOUNT_RE))
 async def start_income(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     amount = parse_amount(message.text)
-    with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
-
-    if not active_sources:
+    keyboard = _source_keyboard(config, message.from_user.id)
+    if keyboard is None:
         await message.answer(texts.get("common.no_active_sources"))
         return
 
     await state.update_data(amount=amount)
     await state.set_state(IncomeFlow.choosing_source)
-    keyboard = build_choice_keyboard(
-        [(s.id, s.name) for s in active_sources], callback_prefix=SOURCE_PREFIX
-    )
     await message.answer(texts.get("common.choose_source_income"), reply_markup=keyboard)
+
+
+@router.callback_query(IncomeFlow.choosing_source, F.data == CANCEL_CB)
+async def cancel_income(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await state.clear()
+    await callback.message.edit_text(texts.get("common.cancelled"))
+    await callback.answer()
 
 
 @router.callback_query(IncomeFlow.choosing_source, F.data.startswith(f"{SOURCE_PREFIX}:"))
@@ -77,25 +118,7 @@ async def choose_source(
     source_id = callback.data.removeprefix(f"{SOURCE_PREFIX}:")
     await state.update_data(source_id=source_id)
 
-    auto_category_name = config.auto_category.get("income")
-    if not auto_category_name:
-        await _prompt_comment(callback.message, state, config, texts)
-        await callback.answer()
-        return
-
-    with connect(config.db_path) as conn:
-        top_level = categories_db.list_categories(
-            conn, ledger_user_id(config, callback.from_user.id)
-        )
-        category = _find_auto_category(top_level, auto_category_name)
-        subcategories = (
-            categories_db.list_categories(
-                conn, ledger_user_id(config, callback.from_user.id), parent_id=category.id
-            )
-            if category
-            else []
-        )
-
+    category, subcategories = _auto_subcategories(config, callback.from_user.id)
     if category is None or not subcategories:
         # Категория для авто-подстановки не найдена (или у неё нет подкатегорий) —
         # просто фиксируем саму категорию (если нашлась) и идём дальше, к комментарию.
@@ -106,10 +129,18 @@ async def choose_source(
         return
 
     await state.update_data(category_id=category.id)
-    await state.set_state(IncomeFlow.choosing_subcategory)
-    keyboard = _subcategory_keyboard(subcategories, config, callback.from_user.id, None)
-    await callback.message.edit_text(texts.get("common.choose_subcategory"), reply_markup=keyboard)
+    await _show_subcategories(callback.message, state, config, texts, callback.from_user.id)
     await callback.answer()
+
+
+async def _show_subcategories(
+    message: Message, state: FSMContext, config: Config, texts: Texts, user_id: int
+) -> None:
+    data = await state.get_data()
+    _, subcategories = _auto_subcategories(config, user_id)
+    await state.set_state(IncomeFlow.choosing_subcategory)
+    keyboard = _subcategory_keyboard(subcategories, config, user_id, data.get("who"))
+    await message.edit_text(texts.get("common.choose_subcategory"), reply_markup=keyboard)
 
 
 @router.callback_query(IncomeFlow.choosing_subcategory, F.data == WHO_TOGGLE_CB)
@@ -149,7 +180,40 @@ async def _prompt_comment(message: Message, state: FSMContext, config: Config, t
     keyboard = (
         build_single_button_keyboard(SKIP_LABEL, SKIP_COMMENT_CB) if config.optional_comment else None
     )
-    await message.edit_text(texts.get("income.enter_comment"), reply_markup=keyboard)
+    await message.edit_text(
+        texts.get("income.enter_comment"), reply_markup=add_back_button(keyboard, BACK_CB)
+    )
+
+
+# --- «Назад»: на шаг раньше; данные отменённого шага сбрасываются ---
+
+
+async def _back_to_source(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    await state.update_data(source_id=None, category_id=None, subcategory_id=None)
+    await state.set_state(IncomeFlow.choosing_source)
+    await callback.message.edit_text(
+        texts.get("common.choose_source_income"),
+        reply_markup=_source_keyboard(config, callback.from_user.id),
+    )
+
+
+@router.callback_query(IncomeFlow.choosing_subcategory, F.data == BACK_CB)
+async def back_from_subcategory(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    await _back_to_source(callback, state, config, texts)
+    await callback.answer()
+
+
+@router.callback_query(IncomeFlow.entering_comment, F.data == BACK_CB)
+async def back_from_comment(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    _, subcategories = _auto_subcategories(config, callback.from_user.id)
+    if subcategories:
+        await state.update_data(subcategory_id=None)
+        await _show_subcategories(callback.message, state, config, texts, callback.from_user.id)
+    else:
+        await _back_to_source(callback, state, config, texts)
+    await callback.answer()
 
 
 @router.message(IncomeFlow.entering_comment, F.text)

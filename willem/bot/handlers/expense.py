@@ -7,7 +7,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
-from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
+from willem.bot.keyboards import (
+    CANCEL_LABEL,
+    SKIP_LABEL,
+    add_back_button,
+    build_choice_keyboard,
+    build_single_button_keyboard,
+)
 from willem.config import FAMILY_WHO, Config, ledger_user_id
 from willem.credit_sheets import (
     OVERPAYMENT_REDUCE,
@@ -35,6 +41,8 @@ SKIP_COMMENT_CB = "exp_comment_skip"
 WHO_TOGGLE_CB = "exp_who_toggle"
 CREDIT_TYPE_PREFIX = "exp_credit_type"
 CREDIT_ACTION_PREFIX = "exp_credit_action"
+BACK_CB = "exp_back"
+CANCEL_CB = "exp_cancel"
 
 CREDIT_TYPE_REGULAR = "regular"
 CREDIT_TYPE_EARLY = "early"
@@ -65,39 +73,106 @@ def _category_keyboard(
     if auto_name:
         label = FAMILY_WHO if current_who == FAMILY_WHO else auto_name
         extra = [(label, WHO_TOGGLE_CB)]
-    return build_choice_keyboard(
+    keyboard = build_choice_keyboard(
         [(c.id, c.name) for c in categories], callback_prefix=CATEGORY_PREFIX, extra_buttons=extra
     )
+    return add_back_button(keyboard, BACK_CB)
 
 
 def _credit_payment_type_keyboard() -> InlineKeyboardMarkup:
-    return build_choice_keyboard(
+    keyboard = build_choice_keyboard(
         list(CREDIT_PAYMENT_TYPE_LABELS), callback_prefix=CREDIT_TYPE_PREFIX, columns=1
     )
+    return add_back_button(keyboard, BACK_CB)
 
 
 def _credit_overpayment_action_keyboard() -> InlineKeyboardMarkup:
-    return build_choice_keyboard(
+    keyboard = build_choice_keyboard(
         list(CREDIT_OVERPAYMENT_ACTION_LABELS), callback_prefix=CREDIT_ACTION_PREFIX, columns=1
+    )
+    return add_back_button(keyboard, BACK_CB)
+
+
+# --- Экраны шагов: каждый рендерится отдельно, чтобы «Назад» мог вернуть на любой из них ---
+
+
+def _source_keyboard(config: Config, user_id: int) -> InlineKeyboardMarkup | None:
+    with connect(config.db_path) as conn:
+        active_sources = sources_db.list_sources(conn, ledger_user_id(config, user_id))
+    if not active_sources:
+        return None
+    keyboard = build_choice_keyboard(
+        [(s.id, s.name) for s in active_sources], callback_prefix=SOURCE_PREFIX
+    )
+    # Первый шаг: до него была сумма, набранная сообщением, — шагать назад некуда, только отмена.
+    return add_back_button(keyboard, CANCEL_CB, label=CANCEL_LABEL)
+
+
+async def _show_categories(
+    message: Message, state: FSMContext, config: Config, texts: Texts, user_id: int
+) -> None:
+    data = await state.get_data()
+    with connect(config.db_path) as conn:
+        active_categories = categories_db.list_categories(conn, ledger_user_id(config, user_id))
+    await state.set_state(ExpenseFlow.choosing_category)
+    keyboard = _category_keyboard(active_categories, config, user_id, data.get("who"))
+    await message.edit_text(texts.get("common.choose_category"), reply_markup=keyboard)
+
+
+def _list_subcategories(config: Config, user_id: int, category_id: str) -> list[Category]:
+    with connect(config.db_path) as conn:
+        return categories_db.list_categories(
+            conn, ledger_user_id(config, user_id), parent_id=category_id
+        )
+
+
+async def _show_subcategories(
+    message: Message, state: FSMContext, texts: Texts, subcategories: list[Category]
+) -> None:
+    await state.set_state(ExpenseFlow.choosing_subcategory)
+    keyboard = build_choice_keyboard(
+        [(c.id, c.name) for c in subcategories],
+        callback_prefix=SUBCATEGORY_PREFIX,
+        extra_buttons=[(SKIP_LABEL, SKIP_SUBCATEGORY_CB)],
+    )
+    await message.edit_text(
+        texts.get("common.choose_subcategory"), reply_markup=add_back_button(keyboard, BACK_CB)
+    )
+
+
+async def _show_credit_payment_type(message: Message, state: FSMContext, texts: Texts) -> None:
+    await state.set_state(ExpenseFlow.choosing_credit_payment_type)
+    await message.edit_text(
+        texts.get("expense.choose_credit_payment_type"), reply_markup=_credit_payment_type_keyboard()
+    )
+
+
+async def _show_credit_overpayment_action(message: Message, state: FSMContext, texts: Texts) -> None:
+    await state.set_state(ExpenseFlow.choosing_credit_overpayment_action)
+    await message.edit_text(
+        texts.get("expense.choose_credit_overpayment_action"),
+        reply_markup=_credit_overpayment_action_keyboard(),
     )
 
 
 @router.message(StateFilter(None), F.text.regexp(EXPENSE_AMOUNT_RE))
 async def start_expense(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     amount = parse_amount(message.text)
-    with connect(config.db_path) as conn:
-        active_sources = sources_db.list_sources(conn, ledger_user_id(config, message.from_user.id))
-
-    if not active_sources:
+    keyboard = _source_keyboard(config, message.from_user.id)
+    if keyboard is None:
         await message.answer(texts.get("common.no_active_sources"))
         return
 
     await state.update_data(amount=amount)
     await state.set_state(ExpenseFlow.choosing_source)
-    keyboard = build_choice_keyboard(
-        [(s.id, s.name) for s in active_sources], callback_prefix=SOURCE_PREFIX
-    )
     await message.answer(texts.get("common.choose_source_expense"), reply_markup=keyboard)
+
+
+@router.callback_query(ExpenseFlow.choosing_source, F.data == CANCEL_CB)
+async def cancel_expense(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await state.clear()
+    await callback.message.edit_text(texts.get("common.cancelled"))
+    await callback.answer()
 
 
 @router.callback_query(ExpenseFlow.choosing_source, F.data.startswith(f"{SOURCE_PREFIX}:"))
@@ -117,9 +192,7 @@ async def choose_source(
         return
 
     await state.update_data(source_id=source_id)
-    await state.set_state(ExpenseFlow.choosing_category)
-    keyboard = _category_keyboard(active_categories, config, callback.from_user.id, None)
-    await callback.message.edit_text(texts.get("common.choose_category"), reply_markup=keyboard)
+    await _show_categories(callback.message, state, config, texts, callback.from_user.id)
     await callback.answer()
 
 
@@ -143,18 +216,9 @@ async def choose_category(
 ) -> None:
     category_id = callback.data.removeprefix(f"{CATEGORY_PREFIX}:")
     await state.update_data(category_id=category_id)
-    with connect(config.db_path) as conn:
-        subcategories = categories_db.list_categories(
-            conn, ledger_user_id(config, callback.from_user.id), parent_id=category_id
-        )
+    subcategories = _list_subcategories(config, callback.from_user.id, category_id)
     if subcategories:
-        await state.set_state(ExpenseFlow.choosing_subcategory)
-        keyboard = build_choice_keyboard(
-            [(c.id, c.name) for c in subcategories],
-            callback_prefix=SUBCATEGORY_PREFIX,
-            extra_buttons=[(SKIP_LABEL, SKIP_SUBCATEGORY_CB)],
-        )
-        await callback.message.edit_text(texts.get("common.choose_subcategory"), reply_markup=keyboard)
+        await _show_subcategories(callback.message, state, texts, subcategories)
     else:
         await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
@@ -173,11 +237,7 @@ async def choose_subcategory(
 
     if credit_sheet_title:
         await state.update_data(credit_sheet_title=credit_sheet_title)
-        await state.set_state(ExpenseFlow.choosing_credit_payment_type)
-        await callback.message.edit_text(
-            texts.get("expense.choose_credit_payment_type"),
-            reply_markup=_credit_payment_type_keyboard(),
-        )
+        await _show_credit_payment_type(callback.message, state, texts)
     else:
         await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
@@ -202,11 +262,7 @@ async def choose_credit_payment_type(
     if payment_type == CREDIT_TYPE_EARLY:
         # "Что сделать с переплатой" имеет смысл только для досрочного взноса — у
         # обычного платежа в графике остаётся дефолтное "Сократить срок", не спрашиваем.
-        await state.set_state(ExpenseFlow.choosing_credit_overpayment_action)
-        await callback.message.edit_text(
-            texts.get("expense.choose_credit_overpayment_action"),
-            reply_markup=_credit_overpayment_action_keyboard(),
-        )
+        await _show_credit_overpayment_action(callback.message, state, texts)
     else:
         await _prompt_comment(callback.message, state, config, texts)
     await callback.answer()
@@ -229,7 +285,68 @@ async def _prompt_comment(message: Message, state: FSMContext, config: Config, t
     keyboard = (
         build_single_button_keyboard(SKIP_LABEL, SKIP_COMMENT_CB) if config.optional_comment else None
     )
-    await message.edit_text(texts.get("expense.enter_comment"), reply_markup=keyboard)
+    await message.edit_text(
+        texts.get("expense.enter_comment"), reply_markup=add_back_button(keyboard, BACK_CB)
+    )
+
+
+# --- «Назад»: на шаг раньше; данные отменённого шага сбрасываются ---
+
+
+@router.callback_query(ExpenseFlow.choosing_category, F.data == BACK_CB)
+async def back_to_source(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    await state.set_state(ExpenseFlow.choosing_source)
+    await callback.message.edit_text(
+        texts.get("common.choose_source_expense"),
+        reply_markup=_source_keyboard(config, callback.from_user.id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ExpenseFlow.choosing_subcategory, F.data == BACK_CB)
+async def back_to_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    await state.update_data(category_id=None)
+    await _show_categories(callback.message, state, config, texts, callback.from_user.id)
+    await callback.answer()
+
+
+@router.callback_query(ExpenseFlow.choosing_credit_payment_type, F.data == BACK_CB)
+async def back_to_subcategory(
+    callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts
+) -> None:
+    await state.update_data(subcategory_id=None, credit_sheet_title=None)
+    data = await state.get_data()
+    subcategories = _list_subcategories(config, callback.from_user.id, data["category_id"])
+    await _show_subcategories(callback.message, state, texts, subcategories)
+    await callback.answer()
+
+
+@router.callback_query(ExpenseFlow.choosing_credit_overpayment_action, F.data == BACK_CB)
+async def back_to_credit_payment_type(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
+    await state.update_data(credit_payment_type=None)
+    await _show_credit_payment_type(callback.message, state, texts)
+    await callback.answer()
+
+
+@router.callback_query(ExpenseFlow.entering_comment, F.data == BACK_CB)
+async def back_from_comment(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
+    """Предыдущий шаг перед комментарием зависит от того, по какой ветке шёл флоу."""
+    data = await state.get_data()
+    if data.get("credit_payment_type") == CREDIT_TYPE_EARLY:
+        await state.update_data(credit_reduce_payment=None)
+        await _show_credit_overpayment_action(callback.message, state, texts)
+    elif data.get("credit_sheet_title"):
+        await state.update_data(credit_payment_type=None)
+        await _show_credit_payment_type(callback.message, state, texts)
+    else:
+        subcategories = _list_subcategories(config, callback.from_user.id, data["category_id"])
+        if subcategories:
+            await state.update_data(subcategory_id=None)
+            await _show_subcategories(callback.message, state, texts, subcategories)
+        else:
+            await state.update_data(category_id=None)
+            await _show_categories(callback.message, state, config, texts, callback.from_user.id)
+    await callback.answer()
 
 
 @router.message(ExpenseFlow.entering_comment, F.text)

@@ -154,6 +154,7 @@ messages:
   common.enter_new_name: "Новое наименование."
   common.renamed: "Переименовано в «{name}»."
   common.archived: "Актив «{name}» выведен из оборота."
+  common.cancelled: "Операция отозвана."
   common.no_active_categories: "Статей расходов не обнаружено. Заведите через /categories."
   common.sync_error_suffix: " Синхронизация с реестром не удалась — операция поставлена в очередь."
 

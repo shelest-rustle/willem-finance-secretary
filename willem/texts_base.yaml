@@ -16,6 +16,7 @@ common:
   enter_new_name: "Новое название. ✏️"
   renamed: "Переименовал в «{name}». ✏️"
   archived: "Архивировал «{name}». 🗄"
+  cancelled: "Отменил. ✖️"
   no_active_categories: "Нет активных категорий. Добавьте через /categories."
   sync_error_suffix: " Ошибка при отправке в Google Sheets, добавлено в очередь на отправку ночью."
 
@@ -127,7 +128,7 @@ edit:
   btn_delete: "🗑 Удалить"
   btn_delete_confirm: "🗑 Да, удалить"
   btn_done: "✅ Готово"
-  btn_back: "← Назад"
+  btn_back: "‹ Назад"
   btn_cancel: "Отмена"
   btn_no_subcategory: "Без подкатегории"
   btn_clear_comment: "Убрать комментарий"

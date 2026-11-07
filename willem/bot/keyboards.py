@@ -14,6 +14,18 @@ EDIT_BUTTON = "Изменить"
 CREDITS_BUTTON = "Кредиты"
 
 SKIP_LABEL = "Пропустить"
+BACK_LABEL = "‹ Назад"
+CANCEL_LABEL = "Отмена"
+
+
+def add_back_button(
+    markup: InlineKeyboardMarkup | None, callback_data: str, label: str = BACK_LABEL
+) -> InlineKeyboardMarkup:
+    """Добавляет отдельной нижней строкой кнопку «‹ Назад» (шаг назад во флоу) — или
+    «Отмена» (`label=CANCEL_LABEL`) на первом шаге, когда возвращаться уже некуда."""
+    rows = list(markup.inline_keyboard) if markup else []
+    rows.append([InlineKeyboardButton(text=label, callback_data=callback_data)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_choice_keyboard(
