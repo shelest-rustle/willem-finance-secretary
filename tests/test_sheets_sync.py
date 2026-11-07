@@ -53,7 +53,7 @@ async def test_sync_after_insert_skips_non_owner(
     config = make_config(db_path)
 
     calls = []
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: calls.append(1) or True)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: calls.append(1) or True)
 
     with connect(str(db_path)) as conn:
         source = sources.create_source(conn, 2, "Kaspi", "card", "KZT")
@@ -76,7 +76,7 @@ async def test_sync_after_insert_syncs_non_owner_when_sync_all_users(
     config = replace(make_config(db_path), sync_all_users=True)
 
     calls = []
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: calls.append(1) or True)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: calls.append(1) or True)
 
     with connect(str(db_path)) as conn:
         source = sources.create_source(conn, 2, "Kaspi", "card", "KZT")
@@ -100,7 +100,7 @@ async def test_sync_after_insert_success_marks_synced(
     init_db(str(db_path))
     config = make_config(db_path)
 
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: True)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: True)
 
     with connect(str(db_path)) as conn:
         source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
@@ -123,7 +123,7 @@ async def test_sync_after_insert_failure_returns_suffix_and_stays_unsynced(
     init_db(str(db_path))
     config = make_config(db_path)
 
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: False)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: False)
 
     with connect(str(db_path)) as conn:
         source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
@@ -146,7 +146,7 @@ def test_resync_owner_unsynced_ignores_other_users(
     init_db(str(db_path))
     config = make_config(db_path)
 
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: True)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: True)
 
     with connect(str(db_path)) as conn:
         owner_source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
@@ -179,7 +179,7 @@ def test_resync_owner_unsynced_syncs_everyone_when_sync_all_users(
     init_db(str(db_path))
     config = replace(make_config(db_path), sync_all_users=True)
 
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: True)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: True)
 
     with connect(str(db_path)) as conn:
         owner_source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
@@ -206,7 +206,7 @@ def test_resync_owner_unsynced_leaves_failures_unsynced(
     init_db(str(db_path))
     config = make_config(db_path)
 
-    monkeypatch.setattr(sheets, "append_transaction", lambda *a, **kw: False)
+    monkeypatch.setattr(sheets, "upsert_transaction", lambda *a, **kw: False)
 
     with connect(str(db_path)) as conn:
         source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")

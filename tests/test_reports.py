@@ -8,13 +8,11 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from willem.bot.handlers.reports import (
-    _apply_amount_edit,
-    _apply_category_edit,
-    _apply_comment_edit,
     _balances_text,
     _period_category_breakdown_text,
     _period_report_text,
     _transaction_summary,
+    last_line,
 )
 from willem.config import Config
 from willem.db import categories, sources
@@ -427,85 +425,21 @@ def test_transaction_summary_adjustment_negative(texts: Texts) -> None:
     assert text == "⚖️ -3 000 ₸ — Kaspi"
 
 
-# --- edit_last apply helpers ---
+# --- /last ---
 
 
-async def test_apply_amount_edit(tmp_path: Path, texts: Texts) -> None:
+def test_last_line_starts_with_short_id_and_escapes_names(tmp_path: Path, texts: Texts) -> None:
     db_path = tmp_path / "test.db"
     init_db(str(db_path))
-    config = make_config(db_path)
 
     with connect(str(db_path)) as conn:
-        source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
-        category = categories.create_category(conn, 1, "Продукты")
+        source = sources.create_source(conn, 1, "Kaspi <gold>", "card", "KZT")
+        category = categories.create_category(conn, 1, "Еда & кафе")
         tx = insert_transaction(
-            conn,
-            user_id=1,
-            type="expense",
-            amount=1000,
-            currency="KZT",
-            source_id=source.id,
-            category_id=category.id,
+            conn, user_id=1, type="expense", amount=1500, currency="KZT",
+            source_id=source.id, category_id=category.id,
         )
+        line = last_line(conn, tx, texts, "Asia/Almaty")
 
-    state = make_state()
-    await state.update_data(transaction_id=tx.id, currency="KZT")
-    text = await _apply_amount_edit(state, config, texts, 2500)
-
-    assert text == "Сумма обновлена: 2 500 ₸. ✏️"
-    with connect(str(db_path)) as conn:
-        row = conn.execute("SELECT amount FROM transactions WHERE id = ?", (tx.id,)).fetchone()
-        assert row["amount"] == 2500
-    assert await state.get_state() is None
-
-
-async def test_apply_comment_edit(tmp_path: Path, texts: Texts) -> None:
-    db_path = tmp_path / "test.db"
-    init_db(str(db_path))
-    config = make_config(db_path)
-
-    with connect(str(db_path)) as conn:
-        source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
-        tx = insert_transaction(
-            conn, user_id=1, type="income", amount=1000, currency="KZT", source_id=source.id
-        )
-
-    state = make_state()
-    await state.update_data(transaction_id=tx.id, currency="KZT")
-    text = await _apply_comment_edit(state, config, texts, "зарплата")
-
-    assert text == "Комментарий обновлён: «зарплата». 💬"
-    with connect(str(db_path)) as conn:
-        row = conn.execute("SELECT comment FROM transactions WHERE id = ?", (tx.id,)).fetchone()
-        assert row["comment"] == "зарплата"
-
-
-async def test_apply_category_edit(tmp_path: Path, texts: Texts) -> None:
-    db_path = tmp_path / "test.db"
-    init_db(str(db_path))
-    config = make_config(db_path)
-
-    with connect(str(db_path)) as conn:
-        source = sources.create_source(conn, 1, "Kaspi", "card", "KZT")
-        category_a = categories.create_category(conn, 1, "Продукты")
-        category_b = categories.create_category(conn, 1, "Транспорт")
-        tx = insert_transaction(
-            conn,
-            user_id=1,
-            type="expense",
-            amount=1000,
-            currency="KZT",
-            source_id=source.id,
-            category_id=category_a.id,
-        )
-
-    state = make_state()
-    await state.update_data(transaction_id=tx.id, currency="KZT")
-    text = await _apply_category_edit(state, config, texts, category_b.id)
-
-    assert text == "Категория обновлена: «Транспорт». 🗂"
-    with connect(str(db_path)) as conn:
-        row = conn.execute(
-            "SELECT category_id FROM transactions WHERE id = ?", (tx.id,)
-        ).fetchone()
-        assert row["category_id"] == category_b.id
+    assert line.startswith(f"<code>{tx.id[:8]}</code> · ")
+    assert "Еда &amp; кафе (Kaspi &lt;gold&gt;)" in line

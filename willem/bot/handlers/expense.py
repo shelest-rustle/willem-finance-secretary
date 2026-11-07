@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
-from willem.config import Config, ledger_user_id
+from willem.config import FAMILY_WHO, Config, ledger_user_id
 from willem.credit_sheets import (
     OVERPAYMENT_REDUCE,
     OVERPAYMENT_SHORTEN,
@@ -21,7 +21,7 @@ from willem.db import transactions as transactions_db
 from willem.db.categories import Category
 from willem.db.connection import connect
 from willem.formatting import currency_symbol, format_amount, period_word
-from willem.sheets_sync import sync_after_insert
+from willem.sheets_sync import sync_after_insert, synced_user_ids
 from willem.texts import Texts
 from willem.timeutil import format_sheet_date, period_bounds
 
@@ -35,8 +35,6 @@ SKIP_COMMENT_CB = "exp_comment_skip"
 WHO_TOGGLE_CB = "exp_who_toggle"
 CREDIT_TYPE_PREFIX = "exp_credit_type"
 CREDIT_ACTION_PREFIX = "exp_credit_action"
-
-FAMILY_WHO = "Семья"
 
 CREDIT_TYPE_REGULAR = "regular"
 CREDIT_TYPE_EARLY = "early"
@@ -310,10 +308,7 @@ async def _record_expense(
         subcategory_name=subcategory.name if subcategory else None,
     )
 
-    synced_user_ids = (
-        config.allowed_telegram_ids if config.sync_all_users else (config.owner_telegram_id,)
-    )
-    if credit_sheet_title and user_id in synced_user_ids:
+    if credit_sheet_title and user_id in synced_user_ids(config):
         outcome = await sync_credit_payment(
             config,
             sheet_title=credit_sheet_title,

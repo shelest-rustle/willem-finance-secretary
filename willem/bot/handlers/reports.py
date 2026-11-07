@@ -1,19 +1,17 @@
 from __future__ import annotations
 
+import html
+
 from aiogram import F, Router
 from aiogram.filters import Command, or_f
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message
 
-from willem.bot.amount import EXPENSE_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import (
     BALANCES_BUTTON,
     LAST_BUTTON,
     TODAY_BUTTON,
     WEEK_BUTTON,
-    build_choice_keyboard,
 )
 from willem.config import Config, ledger_user_id
 from willem.db import categories as categories_db
@@ -28,16 +26,7 @@ from willem.timeutil import format_local_datetime, period_bounds
 
 router = Router(name="reports")
 
-EDIT_AMOUNT_CB = "edl_amount"
-EDIT_COMMENT_CB = "edl_comment"
-EDIT_CATEGORY_CB = "edl_category"
-EDIT_CATEGORY_PREFIX = "edl_category_pick"
-
-
-class EditLastFlow(StatesGroup):
-    entering_amount = State()
-    entering_comment = State()
-    choosing_category = State()
+LAST_LIMIT = 20
 
 
 def _category_word(count: int) -> str:
@@ -303,7 +292,12 @@ def _transaction_summary(
     )
 
 
-def _resolve_summary(conn, tx: Transaction, texts: Texts) -> str:
+def short_id(tx: Transaction) -> str:
+    """Первые 8 символов uuid — по ним операцию можно найти в «Изменить»."""
+    return tx.id[:8]
+
+
+def resolve_summary(conn, tx: Transaction, texts: Texts) -> str:
     source = sources_db.get_source(conn, tx.source_id)
     category = categories_db.get_category(conn, tx.category_id) if tx.category_id else None
     target = sources_db.get_source(conn, tx.target_source_id) if tx.target_source_id else None
@@ -316,24 +310,14 @@ def _resolve_summary(conn, tx: Transaction, texts: Texts) -> str:
     )
 
 
-def _editable_fields(tx_type: str) -> list[str]:
-    if tx_type == "expense":
-        return ["amount", "category", "comment"]
-    if tx_type in ("income", "adjustment"):
-        return ["amount", "comment"]
-    return ["comment"]  # transfer
-
-
-def _edit_last_keyboard(tx_type: str) -> InlineKeyboardMarkup:
-    fields = _editable_fields(tx_type)
-    builder = InlineKeyboardBuilder()
-    if "amount" in fields:
-        builder.button(text="✏️ Сумма", callback_data=EDIT_AMOUNT_CB)
-    if "category" in fields:
-        builder.button(text="🗂 Категория", callback_data=EDIT_CATEGORY_CB)
-    builder.button(text="💬 Комментарий", callback_data=EDIT_COMMENT_CB)
-    builder.adjust(2)
-    return builder.as_markup()
+def last_line(conn, tx: Transaction, texts: Texts, tz_name: str) -> str:
+    """Строка «Последних»: ID (моноширинный — копируется тапом) · дата · summary.
+    Бот работает в ParseMode.HTML, а имена источников/категорий задают пользователи —
+    поэтому summary экранируется."""
+    return (
+        f"<code>{short_id(tx)}</code> · {format_local_datetime(tx.created_at_utc, tz_name)} · "
+        f"{html.escape(resolve_summary(conn, tx, texts))}"
+    )
 
 
 def _resolve_category_names(conn, period_transactions: list[Transaction]) -> dict[str, str]:
@@ -394,121 +378,15 @@ async def show_balances(message: Message, state: FSMContext, config: Config, tex
 async def show_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
     await state.clear()
     with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=5)
-        lines = [
-            f"{format_local_datetime(tx.created_at_utc, config.timezone)} · {_resolve_summary(conn, tx, texts)}"
-            for tx in recent
-        ]
+        recent = transactions_db.list_recent(
+            conn, ledger_user_id(config, message.from_user.id), limit=LAST_LIMIT
+        )
+        lines = [last_line(conn, tx, texts, config.timezone) for tx in recent]
 
     if not lines:
         await message.answer(texts.get("reports.last_empty"))
         return
-    await message.answer(f"{texts.get('reports.last_header')}\n\n" + "\n".join(lines))
-
-
-@router.message(Command("delete_last"))
-async def delete_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
-    await state.clear()
-    with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=1)
-        if not recent:
-            await message.answer(texts.get("reports.delete_empty"))
-            return
-        tx = recent[0]
-        summary = _resolve_summary(conn, tx, texts)
-        transactions_db.soft_delete_transaction(conn, tx.id)
-    await message.answer(texts.get("reports.deleted", summary=summary))
-
-
-@router.message(Command("edit_last"))
-async def edit_last(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
-    await state.clear()
-    with connect(config.db_path) as conn:
-        recent = transactions_db.list_recent(conn, ledger_user_id(config, message.from_user.id), limit=1)
-        if not recent:
-            await message.answer(texts.get("reports.edit_empty"))
-            return
-        tx = recent[0]
-        summary = _resolve_summary(conn, tx, texts)
-
-    await state.update_data(transaction_id=tx.id, currency=tx.currency)
     await message.answer(
-        texts.get("reports.edit_prompt", summary=summary),
-        reply_markup=_edit_last_keyboard(tx.type),
+        f"{texts.get('reports.last_header')}\n\n" + "\n".join(lines)
+        + f"\n\n{texts.get('reports.last_edit_hint')}"
     )
-
-
-@router.callback_query(F.data == EDIT_AMOUNT_CB)
-async def start_edit_amount(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
-    await state.set_state(EditLastFlow.entering_amount)
-    await callback.message.edit_text(texts.get("reports.edit_amount_prompt"))
-    await callback.answer()
-
-
-@router.message(EditLastFlow.entering_amount, F.text.regexp(EXPENSE_AMOUNT_RE))
-async def finish_edit_amount(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
-    text = await _apply_amount_edit(state, config, texts, parse_amount(message.text))
-    await message.answer(text)
-
-
-@router.callback_query(F.data == EDIT_COMMENT_CB)
-async def start_edit_comment(callback: CallbackQuery, state: FSMContext, texts: Texts) -> None:
-    await state.set_state(EditLastFlow.entering_comment)
-    await callback.message.edit_text(texts.get("reports.edit_comment_prompt"))
-    await callback.answer()
-
-
-@router.message(EditLastFlow.entering_comment, F.text)
-async def finish_edit_comment(message: Message, state: FSMContext, config: Config, texts: Texts) -> None:
-    text = await _apply_comment_edit(state, config, texts, message.text)
-    await message.answer(text)
-
-
-@router.callback_query(F.data == EDIT_CATEGORY_CB)
-async def start_edit_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
-    with connect(config.db_path) as conn:
-        active_categories = categories_db.list_categories(
-            conn, ledger_user_id(config, callback.from_user.id)
-        )
-    await state.set_state(EditLastFlow.choosing_category)
-    keyboard = build_choice_keyboard(
-        [(c.id, c.name) for c in active_categories], callback_prefix=EDIT_CATEGORY_PREFIX
-    )
-    await callback.message.edit_text(texts.get("common.choose_category"), reply_markup=keyboard)
-    await callback.answer()
-
-
-@router.callback_query(
-    EditLastFlow.choosing_category, F.data.startswith(f"{EDIT_CATEGORY_PREFIX}:")
-)
-async def finish_edit_category(callback: CallbackQuery, state: FSMContext, config: Config, texts: Texts) -> None:
-    category_id = callback.data.removeprefix(f"{EDIT_CATEGORY_PREFIX}:")
-    text = await _apply_category_edit(state, config, texts, category_id)
-    await callback.message.edit_text(text)
-    await callback.answer()
-
-
-async def _apply_amount_edit(state: FSMContext, config: Config, texts: Texts, amount: float) -> str:
-    data = await state.get_data()
-    await state.clear()
-    with connect(config.db_path) as conn:
-        transactions_db.update_transaction(conn, data["transaction_id"], amount=amount)
-    symbol = currency_symbol(data["currency"])
-    return texts.get("reports.amount_updated", amount=format_amount(amount), symbol=symbol)
-
-
-async def _apply_comment_edit(state: FSMContext, config: Config, texts: Texts, comment: str) -> str:
-    data = await state.get_data()
-    await state.clear()
-    with connect(config.db_path) as conn:
-        transactions_db.update_transaction(conn, data["transaction_id"], comment=comment)
-    return texts.get("reports.comment_updated", comment=comment)
-
-
-async def _apply_category_edit(state: FSMContext, config: Config, texts: Texts, category_id: str) -> str:
-    data = await state.get_data()
-    await state.clear()
-    with connect(config.db_path) as conn:
-        category = categories_db.get_category(conn, category_id)
-        transactions_db.update_transaction(conn, data["transaction_id"], category_id=category_id)
-    return texts.get("reports.category_updated", name=category.name)

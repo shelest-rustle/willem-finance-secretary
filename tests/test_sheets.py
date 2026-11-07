@@ -263,6 +263,8 @@ class FakeWorksheet:
         self.existing_ids = existing_ids
         self.fail_times = fail_times
         self.appended: list = []
+        self.updated: list = []
+        self.deleted_rows: list = []
 
     def col_values(self, index: int) -> list[str]:
         return ["id", *self.existing_ids]
@@ -272,6 +274,12 @@ class FakeWorksheet:
             self.fail_times -= 1
             raise RuntimeError("API недоступен")
         self.appended.append(row)
+
+    def update(self, values, range_name: str, value_input_option: str) -> None:
+        self.updated.append((range_name, values))
+
+    def delete_rows(self, start_index: int) -> None:
+        self.deleted_rows.append(start_index)
 
 
 def test_get_worksheet_uses_profile_sheet_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -298,45 +306,86 @@ def test_get_worksheet_uses_profile_sheet_name(monkeypatch: pytest.MonkeyPatch) 
     assert requested_names == ["Учёт"]
 
 
-def test_append_transaction_skips_duplicate(monkeypatch: pytest.MonkeyPatch) -> None:
-    tx = make_tx()
-    worksheet = FakeWorksheet(existing_ids=["tx-1"])
+def test_upsert_transaction_overwrites_existing_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    tx = make_tx(amount=5000.0)
+    worksheet = FakeWorksheet(existing_ids=["tx-0", "tx-1"])
     monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
 
-    result = sheets.append_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
+    result = sheets.upsert_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
 
     assert result is True
     assert worksheet.appended == []
+    # шапка — строка 1, "tx-0" — 2, "tx-1" — 3; 11 колонок willem: A..K
+    assert len(worksheet.updated) == 1
+    range_name, values = worksheet.updated[0]
+    assert range_name == "A3:K3"
+    assert values[0][2] == 5000.0
+    assert values[0][-1] == "tx-1"
 
 
-def test_append_transaction_appends_new_row(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upsert_transaction_household_range_covers_15_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    worksheet = FakeWorksheet(existing_ids=["tx-1"])
+    monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
+
+    class HouseholdConfig(FakeConfig):
+        profile_name = "pantalone"
+
+    sheets.upsert_transaction(HouseholdConfig(), make_tx(), source_name="Общий счёт")
+
+    assert worksheet.updated[0][0] == "A2:O2"
+
+
+def test_upsert_transaction_deleted_removes_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    worksheet = FakeWorksheet(existing_ids=["tx-0", "tx-1"])
+    monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
+
+    result = sheets.upsert_transaction(FakeConfig(), make_tx(deleted=True), source_name="Kaspi")
+
+    assert result is True
+    assert worksheet.deleted_rows == [3]
+    assert worksheet.appended == []
+    assert worksheet.updated == []
+
+
+def test_upsert_transaction_deleted_without_row_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    worksheet = FakeWorksheet(existing_ids=[])
+    monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
+
+    result = sheets.upsert_transaction(FakeConfig(), make_tx(deleted=True), source_name="Kaspi")
+
+    assert result is True
+    assert worksheet.deleted_rows == []
+    assert worksheet.appended == []
+
+
+def test_upsert_transaction_appends_new_row(monkeypatch: pytest.MonkeyPatch) -> None:
     tx = make_tx()
     worksheet = FakeWorksheet(existing_ids=[])
     monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
 
-    result = sheets.append_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
+    result = sheets.upsert_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
 
     assert result is True
     assert len(worksheet.appended) == 1
 
 
-def test_append_transaction_retries_once_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upsert_transaction_retries_once_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     tx = make_tx()
     worksheet = FakeWorksheet(existing_ids=[], fail_times=1)
     monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
 
-    result = sheets.append_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
+    result = sheets.upsert_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
 
     assert result is True
     assert len(worksheet.appended) == 1
 
 
-def test_append_transaction_fails_after_two_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upsert_transaction_fails_after_two_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     tx = make_tx()
     worksheet = FakeWorksheet(existing_ids=[], fail_times=2)
     monkeypatch.setattr(sheets, "_get_worksheet", lambda config: worksheet)
 
-    result = sheets.append_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
+    result = sheets.upsert_transaction(FakeConfig(), tx, source_name="Kaspi", category_name="Продукты")
 
     assert result is False
     assert worksheet.appended == []

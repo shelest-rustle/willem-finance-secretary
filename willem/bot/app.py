@@ -6,7 +6,17 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from willem.bot.handlers import categories, credits, expense, income, reports, sources, start, transfer
+from willem.bot.handlers import (
+    categories,
+    credits,
+    edit,
+    expense,
+    income,
+    reports,
+    sources,
+    start,
+    transfer,
+)
 from willem.bot.middlewares import AllowedUsersMiddleware
 from willem.config import Config
 from willem.scheduler import create_scheduler
@@ -28,6 +38,9 @@ def create_dispatcher(config: Config) -> Dispatcher:
     dp.include_router(sources.router)
     dp.include_router(reports.router)
     dp.include_router(credits.router)
+    # Последним: у флоу редактирования есть свободный текстовый ввод (комментарий), а
+    # кнопки главного меню во время него должны срабатывать как кнопки, а не как текст.
+    dp.include_router(edit.router)
     return dp
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 import gspread
+from gspread.utils import rowcol_to_a1
 
 from willem.config import Config
 from willem.db.transactions import Transaction
@@ -159,7 +160,7 @@ def row_for_transaction(
     )
 
 
-def append_transaction(
+def upsert_transaction(
     config: Config,
     tx: Transaction,
     *,
@@ -169,8 +170,11 @@ def append_transaction(
     target_name: str | None = None,
     target_kind: str | None = None,
 ) -> bool:
-    """Синхронно, с одним ретраем, пытается записать операцию в Sheets.
+    """Синхронно, с одним ретраем, приводит строку операции в Sheets к состоянию БД.
 
+    Строка ищется по колонке `id` (последняя колонка листа у обоих форматов): есть —
+    перезаписывается целиком (`A..id`, колонки правее не трогаются), нет — дописывается
+    в конец. Удалённая операция (`tx.deleted`) — строка удаляется, если она есть.
     Блокирующий (gspread не asyncio) — вызывающий код должен уводить это в поток.
     """
     row = row_for_transaction(
@@ -187,10 +191,19 @@ def append_transaction(
     for attempt in (1, 2):
         try:
             worksheet = _get_worksheet(config)
-            existing_ids = set(worksheet.col_values(id_column)[1:])
-            if tx.id in existing_ids:
-                return True
-            worksheet.append_row(row, value_input_option="USER_ENTERED")
+            ids = worksheet.col_values(id_column)
+            row_number = ids.index(tx.id) + 1 if tx.id in ids else None
+            if tx.deleted:
+                if row_number is not None:
+                    worksheet.delete_rows(row_number)
+            elif row_number is not None:
+                worksheet.update(
+                    values=[row],
+                    range_name=f"A{row_number}:{rowcol_to_a1(row_number, id_column)}",
+                    value_input_option="USER_ENTERED",
+                )
+            else:
+                worksheet.append_row(row, value_input_option="USER_ENTERED")
             return True
         except Exception:
             logger.exception("Ошибка записи в Google Sheets (попытка %s/2)", attempt)

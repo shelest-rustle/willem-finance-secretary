@@ -12,6 +12,9 @@ _PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 _DEFAULT_CURRENCY_OPTIONS = (("KZT", "KZT"), ("RUB", "RUB"), ("USD", "USD"), ("USDT", "USDT"))
 _DEFAULT_TYPE_OPTIONS = (("card", "Карта"), ("cash", "Наличные"), ("crypto", "Крипто"))
 
+# Значение `transactions.who` для общесемейной операции — альтернатива имени из `people`.
+FAMILY_WHO = "Семья"
+
 
 def _require(name: str) -> str:
     value = os.environ.get(name)

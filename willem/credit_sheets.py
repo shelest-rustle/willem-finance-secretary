@@ -210,7 +210,7 @@ async def sync_credit_payment(
     comment: str | None,
     date_str: str,
 ) -> CreditSyncOutcome:
-    """Блокирующие вызовы gspread уходят в отдельный поток — как и `sheets.append_transaction`."""
+    """Блокирующие вызовы gspread уходят в отдельный поток — как и `sheets.upsert_transaction`."""
     try:
         if is_early:
             success = await asyncio.to_thread(

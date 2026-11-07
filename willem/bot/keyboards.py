@@ -10,6 +10,7 @@ BALANCES_BUTTON = "Баланс"
 TODAY_BUTTON = "Сегодня"
 WEEK_BUTTON = "Неделя"
 LAST_BUTTON = "Последние"
+EDIT_BUTTON = "Изменить"
 CREDITS_BUTTON = "Кредиты"
 
 SKIP_LABEL = "Пропустить"
@@ -67,9 +68,10 @@ def build_main_menu(show_credits: bool = False) -> ReplyKeyboardMarkup:
     builder.button(text=TODAY_BUTTON)
     builder.button(text=WEEK_BUTTON)
     builder.button(text=LAST_BUTTON)
-    rows = [2, 2, 2, 1]
+    builder.button(text=EDIT_BUTTON)
+    rows = [2, 2, 2, 2]
     if show_credits:
         builder.button(text=CREDITS_BUTTON)
-        rows[-1] = 2
+        rows.append(1)
     builder.adjust(*rows)
     return builder.as_markup(resize_keyboard=True)

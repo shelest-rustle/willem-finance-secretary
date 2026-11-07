@@ -14,7 +14,7 @@ optional_comment: true    # комментарий можно пропустит
 sync_all_users: true      # в общую таблицу пишут все разрешённые пользователи, не только владелец
 
 # Полный шер: у ВСЕХ участников профиля — один и тот же леджер (источники, категории,
-# транзакции, /today, /week, /last, /edit_last, /delete_last — всё общее на двоих).
+# транзакции, /today, /week, /last, «Изменить» — всё общее на двоих).
 # Технически все сводятся к id владельца профиля (см. willem/config.py::ledger_user_id).
 # Поле "Кто" по-прежнему определяется по реальному отправителю через people:.
 shared_ledger: true
@@ -230,15 +230,43 @@ messages:
   reports.summary_adjustment: "Коррекция: {sign}{amount} {symbol} — {source}"
   reports.last_header: "Реестр последних операций."
   reports.last_empty: "Операций не зафиксировано."
-  reports.delete_empty: "Операций не зафиксировано."
-  reports.deleted: "Операция аннулирована: {summary}."
-  reports.edit_empty: "Операций не зафиксировано."
-  reports.edit_prompt: "Последняя операция: {summary}. Что подлежит пересмотру?"
-  reports.edit_amount_prompt: "Новая сумма."
-  reports.edit_comment_prompt: "Новый комментарий."
-  reports.amount_updated: "Сумма пересмотрена: {amount} {symbol}."
-  reports.comment_updated: "Комментарий пересмотрен: «{comment}»."
-  reports.category_updated: "Статья пересмотрена: «{name}»."
+  reports.last_edit_hint: "Пересмотр или аннулирование операции — «Изменить» и реестровый номер."
+
+  edit.enter_id: "Назовите реестровый номер операции — первые 8 знаков из «Последние» или полностью."
+  edit.invalid_id: "Это не реестровый номер — требуется не менее 8 знаков (0-9, a-f). Повторите."
+  edit.not_found: "Операция с таким номером в реестре не значится."
+  edit.ambiguous: "Номеру соответствует несколько операций — уточните, добавив знаков:\n\n{lines}"
+  edit.card: "Операция <code>{short_id}</code> · {date}\n{summary}{details}\n\nЧто подлежит пересмотру?"
+  edit.detail_subcategory: "\nПодстатья: {name}"
+  edit.detail_who: "\nКто: {who}"
+  edit.detail_comment: "\nКомментарий: «{comment}»"
+  edit.btn_amount: "Сумма"
+  edit.btn_target_amount: "Сумма зачисления"
+  edit.btn_source: "Счёт"
+  edit.btn_source_from: "Счёт списания"
+  edit.btn_target_source: "Счёт зачисления"
+  edit.btn_category: "Статья"
+  edit.btn_subcategory: "Подстатья"
+  edit.btn_who: "Кто"
+  edit.btn_comment: "Комментарий"
+  edit.btn_delete: "Аннулировать"
+  edit.btn_delete_confirm: "Подтверждаю аннулирование"
+  edit.btn_done: "Завершить"
+  edit.btn_back: "Назад"
+  edit.btn_cancel: "Отмена"
+  edit.btn_no_subcategory: "Без подстатьи"
+  edit.btn_clear_comment: "Снять комментарий"
+  edit.enter_amount: "Новая сумма."
+  edit.enter_amount_new_currency: "Счёт ведётся в {currency} — укажите сумму в {currency}."
+  edit.enter_target_amount: "Сколько поступит на счёт «{target_name}»?"
+  edit.enter_comment: "Новый комментарий."
+  edit.choose_who: "Кто совершил операцию?"
+  edit.confirm_delete: "Аннулировать операцию? Действие необратимо."
+  edit.updated: "Пересмотрено.{suffix}\n\n"
+  edit.deleted: "Операция аннулирована: {summary}.{suffix}"
+  edit.credit_sheet_warning: " Реестр кредита не пересмотрен — внесите правку вручную."
+  edit.done: "Пересмотр завершён."
+  edit.cancelled: "Отменено."
 
   credits.list_title: "Кредитные обязательства."
   credits.list_line: "«{name}»: очередной взнос {date}, {amount} {symbol}"

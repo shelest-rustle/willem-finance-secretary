@@ -9,7 +9,6 @@ from willem.timeutil import now_utc_iso
 
 TransactionType = Literal["expense", "income", "transfer", "adjustment"]
 
-_UNSET: Any = object()
 
 
 @dataclass(frozen=True)
@@ -139,33 +138,56 @@ def list_recent(
     return [Transaction.from_row(r) for r in rows]
 
 
-def update_transaction(
-    conn: sqlite3.Connection,
-    transaction_id: str,
-    *,
-    amount: float | None = None,
-    category_id: str | None = _UNSET,
-    comment: str | None = _UNSET,
-) -> None:
-    fields = []
-    params: list = []
-    if amount is not None:
-        fields.append("amount = ?")
-        params.append(amount)
-    if category_id is not _UNSET:
-        fields.append("category_id = ?")
-        params.append(category_id)
-    if comment is not _UNSET:
-        fields.append("comment = ?")
-        params.append(comment)
+def find_by_id_prefix(
+    conn: sqlite3.Connection, user_id: int, prefix: str, limit: int = 5
+) -> list[Transaction]:
+    """Не удалённые операции леджера, id которых начинается с `prefix` — для редактирования
+    по ID (первые 8 символов из /last или полный uuid). `prefix` должен быть уже
+    провалидирован вызывающим кодом (`[0-9a-f-]`), поэтому `%`/`_` в него не попадают."""
+    rows = conn.execute(
+        "SELECT * FROM transactions WHERE user_id = ? AND deleted = 0 AND id LIKE ? "
+        "ORDER BY created_at_utc DESC LIMIT ?",
+        (user_id, f"{prefix}%", limit),
+    ).fetchall()
+    return [Transaction.from_row(r) for r in rows]
+
+
+_UPDATABLE_FIELDS = (
+    "amount",
+    "currency",
+    "target_amount",
+    "target_currency",
+    "source_id",
+    "target_source_id",
+    "category_id",
+    "subcategory_id",
+    "who",
+    "comment",
+)
+
+
+def update_transaction(conn: sqlite3.Connection, transaction_id: str, **fields: Any) -> None:
+    """Обновляет переданные поля операции (только из `_UPDATABLE_FIELDS`; `None` — реально
+    обнулить поле). Любая правка сбрасывает `synced` — строку в Google Sheets нужно
+    перезаписать, и если это не удастся сразу, её подхватит ночная досинхронизация."""
+    unknown = set(fields) - set(_UPDATABLE_FIELDS)
+    if unknown:
+        raise ValueError(f"нельзя обновить поля: {sorted(unknown)}")
     if not fields:
         return
-    params.append(transaction_id)
-    conn.execute(f"UPDATE transactions SET {', '.join(fields)} WHERE id = ?", params)
+    assignments = ", ".join(f"{name} = ?" for name in fields)
+    conn.execute(
+        f"UPDATE transactions SET {assignments}, synced = 0 WHERE id = ?",
+        [*fields.values(), transaction_id],
+    )
 
 
 def soft_delete_transaction(conn: sqlite3.Connection, transaction_id: str) -> None:
-    conn.execute("UPDATE transactions SET deleted = 1 WHERE id = ?", (transaction_id,))
+    """Помечает операцию удалённой и несинхронизированной — строку из Google Sheets
+    удаляет `sheets.upsert_transaction` (сразу или ночной досинхронизацией)."""
+    conn.execute(
+        "UPDATE transactions SET deleted = 1, synced = 0 WHERE id = ?", (transaction_id,)
+    )
 
 
 def list_unsynced(conn: sqlite3.Connection, user_id: int) -> list[Transaction]:

@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from willem.bot.amount import INCOME_AMOUNT_RE, parse_amount
 from willem.bot.keyboards import SKIP_LABEL, build_choice_keyboard, build_single_button_keyboard
-from willem.config import Config, ledger_user_id
+from willem.config import FAMILY_WHO, Config, ledger_user_id
 from willem.db import categories as categories_db
 from willem.db import sources as sources_db
 from willem.db import transactions as transactions_db
@@ -25,8 +25,6 @@ SUBCATEGORY_PREFIX = "inc_subcat"
 SKIP_SUBCATEGORY_CB = "inc_subcat_skip"
 SKIP_COMMENT_CB = "inc_comment_skip"
 WHO_TOGGLE_CB = "inc_who_toggle"
-
-FAMILY_WHO = "Семья"
 
 
 class IncomeFlow(StatesGroup):
